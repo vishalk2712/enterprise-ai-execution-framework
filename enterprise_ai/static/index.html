@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="A local supplier intelligence workbench with source evidence and approved actions.">
+  <title>Outcome Engine · Supplier intelligence</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="masthead">
+    <a class="brand" href="#overview" aria-label="Outcome Engine overview"><span class="brand-icon" aria-hidden="true">oe</span><span>Outcome Engine<small>Supplier intelligence</small></span></a>
+    <nav aria-label="Main navigation"><a href="#overview">Overview</a><a href="#evidence">Evidence</a><a href="#actions">Actions <span id="action-count" class="nav-count">0</span></a></nav>
+    <div class="environment"><span class="status-dot"></span> LOCAL WORKSPACE</div>
+  </header>
+  <main>
+    <div id="notification" class="notification" role="status" aria-live="polite" hidden></div>
+    <section class="hero" id="overview">
+      <div><div class="eyebrow"><span class="short-rule"></span> DATA → EVIDENCE → OUTCOME</div><h1>Clarity across<br>your supplier data.</h1><p>Resolve identities. Understand spend. Move from a source-backed answer to an approved action.</p></div>
+      <div class="hero-aside"><div class="version-tag">WORKING PROTOTYPE / V0.1</div><p>A transparent rules baseline.<br>Your data stays in this local workspace.</p><div class="hero-buttons"><button id="demo-button" class="button button-primary" type="button"><span aria-hidden="true">↗</span> Load sample data</button><a id="export-button" class="button button-secondary" href="/api/export" download="supplier-intelligence-report.md">Export report</a></div></div>
+    </section>
+    <section class="metrics" aria-label="Dataset overview">
+      <div class="metric"><span class="metric-label">SUPPLIER RECORDS</span><strong id="supplier-count">—</strong><span>Across imported source rows</span></div>
+      <div class="metric"><span class="metric-label">RESOLVED ENTITIES</span><strong id="entity-count">—</strong><span>Grouped by exact identity evidence</span></div>
+      <div class="metric"><span class="metric-label">INVOICE RECORDS</span><strong id="invoice-count">—</strong><span>Included in spend analysis</span></div>
+      <div class="metric metric-accent"><span class="metric-label">NEEDS REVIEW</span><strong id="review-count">—</strong><span>Possible matches kept separate</span></div>
+    </section>
+    <div id="dataset-warnings" class="dataset-warnings" aria-live="polite" hidden></div>
+    <details class="import-panel" id="import-panel"><summary><span><span class="upload-symbol" aria-hidden="true">↑</span> Bring your own data <small>Two CSV files. One connected view.</small></span><span class="details-arrow" aria-hidden="true">+</span></summary><form id="import-form"><div class="import-grid"><label>Supplier records<input id="suppliers-file" type="file" accept=".csv,text/csv" required><small>Use the supplier CSV schema documented in the README.</small></label><label>Spend records<input id="spend-file" type="file" accept=".csv,text/csv" required><small>Invoice amounts retain their original currency.</small></label><button class="button button-primary" type="submit">Analyze files <span aria-hidden="true">→</span></button></div><p class="form-note">Files are processed by this local server. Importing replaces the current dataset. No source code or uploaded instructions are executed.</p></form></details>
+    <div class="workspace-grid">
+      <section class="panel register-panel"><div class="panel-heading"><div><div class="eyebrow">01 / IDENTITY</div><h2>A cleaner supplier register</h2></div><span class="pill">Exact evidence</span></div><p class="section-note">Trace each entity back to its original supplier records.</p><div class="table-wrap"><table><thead><tr><th scope="col">Supplier entity</th><th scope="col">Source records</th><th scope="col">Resolution</th><th scope="col"><span class="sr-only">Action</span></th></tr></thead><tbody id="entities-body"><tr><td colspan="4" class="empty-cell">Load the sample dataset or import CSV files to begin.</td></tr></tbody></table></div><div class="panel-footer"><span class="small-dot" aria-hidden="true"></span> Similar names alone do not trigger a merge.</div></section>
+      <section class="panel ask-panel" id="evidence"><div class="panel-heading"><div><div class="eyebrow">02 / UNDERSTANDING</div><h2>Ask the evidence</h2></div><span class="pill pill-teal">Rules baseline</span></div><p class="section-note">Answers are calculated from your imported records. No live LLM is connected.</p><form id="query-form"><label class="sr-only" for="question">Ask a question about supplier data</label><textarea id="question" rows="3" maxlength="2000" placeholder="What is our total spend by currency?" required></textarea><div class="question-suggestions"><button class="suggestion" type="button" data-question="What is our total spend by currency?">Total spend</button><button class="suggestion" type="button" data-question="Which suppliers have the highest spend?">Top suppliers</button><button class="suggestion" type="button" data-question="Which supplier records are duplicates?">Duplicates</button></div><div class="query-controls"><label for="budget-tokens">Context budget <select id="budget-tokens"><option value="1000">1,000 estimated tokens</option><option value="2000" selected>2,000 estimated tokens</option><option value="4000">4,000 estimated tokens</option></select></label><button class="button button-primary" type="submit">Get answer <span aria-hidden="true">↗</span></button></div></form><div id="query-result" class="query-result" aria-live="polite" hidden></div></section>
+      <section class="panel spend-panel"><div class="panel-heading"><div><div class="eyebrow">03 / SPEND</div><h2>The numbers, without guesswork</h2></div></div><p class="section-note">Currencies are shown separately. No exchange rate is assumed.</p><div id="currency-totals" class="currency-totals"><p class="empty-state">Spend totals will appear after import.</p></div><div id="spend-bars" class="spend-bars"></div></section>
+      <section class="panel graph-panel"><div class="panel-heading"><div><div class="eyebrow">04 / CONNECTIONS</div><h2>Follow the relationships</h2></div><span id="graph-count" class="pill">0 nodes</span></div><div class="graph-legend"><span><i class="legend-entity"></i>Resolved entity</span><span><i class="legend-source"></i>Source record</span><span><i class="legend-invoice"></i>Invoice / other</span></div><div id="graph-view" class="graph-view"><p class="empty-state">A source-linked graph will appear here.</p></div><p id="graph-note" class="section-note graph-note">Connections make the evidence inspectable; they do not guarantee correctness.</p></section>
+    </div>
+    <section class="panel review-panel"><div class="panel-heading"><div><div class="eyebrow">HUMAN JUDGMENT</div><h2>Similar does not mean the same</h2></div><span class="pill pill-amber">Review candidates</span></div><p class="section-note">These records remain separate. Investigate their source details before changing your original data.</p><div id="review-list" class="review-list"><p class="empty-state">Load data to check for ambiguous identities.</p></div></section>
+    <section class="panel actions-panel" id="actions"><div class="panel-heading"><div><div class="eyebrow">05 / EXECUTION</div><h2>Actions with a deliberate checkpoint</h2></div><span class="pill">Local mock portal</span></div><p class="section-note">Stage a supplier from the register, inspect its payload, approve it, then sync to a local demonstration portal. No external system is changed.</p><div class="action-flow" aria-label="Action workflow"><span>01 <b>Stage</b></span><span aria-hidden="true">→</span><span>02 <b>Approve</b></span><span aria-hidden="true">→</span><span>03 <b>Execute locally</b></span></div><div id="actions-list" class="actions-list"><p class="empty-state">Your action queue is empty. Start with “Stage sync” on a supplier.</p></div><details class="portal-panel"><summary>View local mock portal <span id="portal-count">0 suppliers</span></summary><div id="portal-content"><p class="empty-state">No suppliers synced yet.</p></div></details></section>
+    <footer class="page-footer"><div><span class="footer-mark">oe</span> Outcome Engine <span class="footer-separator">/</span> From fragmented data to verifiable work.</div><span>Local prototype · No API key required</span></footer>
+  </main>
+</body>
+</html>
+

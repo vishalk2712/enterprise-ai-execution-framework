@@ -1,0 +1,11 @@
+supplier_id,name,country,registration_id,tax_id,postcode
+SUP-001,Northbridge Components Ltd,GB,REG-GB-41001,GB123450001,SW1A1AA
+SUP-002,Northbridge Components Limited,GB,REG-GB-41001,,SW1A 1AA
+SUP-003,Northbridge Components Trading,GB,,GB123450001,SW1A1AA
+SUP-004,Northbridge Component Services,GB,REG-GB-99001,GB999990001,SW1A1AB
+SUP-005,Atlas Packaging Inc,US,US-A700,,10001
+SUP-006,Atlas Packaging LLC,US,US-A700,US-TAX-770,10001
+SUP-007,Harbour Office Supplies,GB,,,BS11AA
+SUP-008,Harbour Office Supply,GB,,,BS11AB
+SUP-009,Rhein Werkzeug GmbH,DE,DE-R901,DE123450009,10115
+SUP-010,Rhein Werkzeug Vertrieb,DE,,DE123450009,10115

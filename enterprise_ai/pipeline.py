@@ -8,7 +8,7 @@ from .contracts import run_dbt_contracts
 from .matching import MatchConfig
 
 
-def run_pipeline(suppliers_path, spend_path, output_dir, use_dbt=True, config=None):
+def run_pipeline(suppliers_path, spend_path, output_dir, use_dbt=True, config=None, calibration=None):
     suppliers = Path(suppliers_path).read_text(encoding="utf-8-sig")
     spend = Path(spend_path).read_text(encoding="utf-8-sig")
     destination = Path(output_dir) / ("run-" + uuid4().hex)
@@ -16,7 +16,7 @@ def run_pipeline(suppliers_path, spend_path, output_dir, use_dbt=True, config=No
     with TemporaryDirectory(prefix="outcome-") as scratch:
         # Keep contract evidence, including failure logs, after temporary engine cleanup.
         normalized, contract = run_dbt_contracts(suppliers, spend, destination/"contracts") if use_dbt else (None, None)
-        engine = Engine(str(Path(scratch)/"engine.sqlite"), config or MatchConfig())
+        engine = Engine(str(Path(scratch)/"engine.sqlite"), config or MatchConfig(), calibration)
         try:
             state = engine.analyze(suppliers, spend, normalized, contract)
             (destination/"state.json").write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")

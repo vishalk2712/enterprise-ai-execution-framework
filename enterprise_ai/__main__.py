@@ -72,7 +72,7 @@ def main():
             print(json.dumps(engine.review(args.evaluation_id, args.label, args.reviewer, args.reason, args.supersedes), indent=2))
         elif args.command == "pipeline":
             from .pipeline import run_pipeline
-            print(json.dumps(run_pipeline(args.suppliers, args.spend, args.output_dir, not args.without_dbt, config), indent=2))
+            print(json.dumps(run_pipeline(args.suppliers, args.spend, args.output_dir, not args.without_dbt, config, engine.calibration), indent=2))
         elif args.command == "calibrate":
             from .calibration import fit_calibration
             rows = [json.loads(line) for line in Path(args.labels).read_text(encoding="utf-8").splitlines() if line.strip()]

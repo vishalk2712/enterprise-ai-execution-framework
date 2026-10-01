@@ -75,6 +75,27 @@ class LocalHTTPIntegrationTests(unittest.TestCase):
         self.assertTrue(answer["evidence"])
         self.assertIn("route", answer)
 
+    def test_review_history_api_separates_labels_and_survives_import(self):
+        self.load_demo()
+        status, _, result = self.request('GET', '/api/evaluations?limit=1')
+        self.assertEqual(status, 200)
+        row = result['evaluations'][0]
+        payload = {'evaluation_id': row['evaluation_id'], 'human_label': 'Unsure', 'reviewer': 'QA', 'reason': 'Synthetic workflow check'}
+        status, _, decision = self.request('POST', '/api/reviews', payload)
+        self.assertEqual(status, 200, decision)
+        self.assertEqual(self.request('POST', '/api/reviews', payload)[0], 400)
+        self.assertEqual(self.request('POST', '/api/reviews', dict(payload, human_label=[]))[0], 400)
+        self.assertEqual(self.request('GET', '/api/evaluations?limit=-1')[0], 400)
+        self.load_demo()
+        status, _, old = self.request('GET', '/api/evaluations?run_id='+result['run_id'])
+        self.assertEqual(status, 200)
+        restored = next(e for e in old['evaluations'] if e['evaluation_id'] == row['evaluation_id'])
+        self.assertEqual(restored['human_label'], 'Unsure')
+        self.assertEqual(restored['algorithmic_outcome'], row['algorithmic_outcome'])
+        status, _, audit = self.request('GET', '/api/audit-export')
+        self.assertEqual(status, 200)
+        self.assertIn('review_decisions', audit)
+
     def test_approval_and_execution_update_only_the_local_portal_once(self):
         state = self.load_demo()
         entity = next(item for item in state["entities"] if len(item["source_supplier_ids"]) > 1)

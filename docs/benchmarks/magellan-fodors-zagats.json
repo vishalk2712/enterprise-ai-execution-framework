@@ -1,0 +1,59 @@
+{
+  "metadata": {
+    "dataset": "Magellan Fodors-Zagats official test split",
+    "input_sha256": "2f225f575b66aec12a7e8fc1d43840907041e7a5f379d9085f1d66de752ddd09",
+    "label_semantics": "Metrics restricted to published test pairs. Unlabeled pairs are unknown. Published pair splits can share entities; no calibration trained on these splits."
+  },
+  "config": {
+    "version": "indexed-features-v2",
+    "normalization_version": "unicode-legal-suffix-v2",
+    "ngram_size": 3,
+    "min_shared_grams": 2,
+    "max_posting": 150,
+    "max_candidates_per_record": 40,
+    "max_evaluations": 200000,
+    "max_feature_chars": 256,
+    "review_threshold": 0.88,
+    "near_miss_floor": 0.8,
+    "excluded_tax_sample_size": 100,
+    "random_seed": 1729,
+    "name_weight": 0.7,
+    "address_weight": 0.2,
+    "postcode_weight": 0.1
+  },
+  "config_id": "0cd7266ffdbcd199642fac5ed3ccb239480be515f99db25c02e85852303b8e80",
+  "seed": 1729,
+  "records": 864,
+  "positive_reference_pairs": 22,
+  "statistics": {
+    "records": 864,
+    "candidate_pairs": 12668,
+    "oversized_postings_skipped": 1,
+    "records_with_capped_neighbors": 280,
+    "all_possible_pairs": 372816
+  },
+  "baseline": {
+    "candidate_pairs": 985,
+    "candidate_recall": 0.9545454545454546,
+    "true_positives": 18,
+    "false_positives": 1,
+    "false_negatives": 4,
+    "precision_on_labeled_pairs": 0.9473684210526315,
+    "recall_on_labeled_pairs": 0.8181818181818182
+  },
+  "indexed": {
+    "candidate_pairs": 12668,
+    "candidate_recall": 1.0,
+    "true_positives": 15,
+    "false_positives": 0,
+    "false_negatives": 7,
+    "precision_on_labeled_pairs": 1.0,
+    "recall_on_labeled_pairs": 0.6818181818181818
+  },
+  "notes": [
+    "Threshold predictions are hypothetical pair classifications, not automatic supplier merges.",
+    "Candidate recall is separate from scoring recall. No ungenerated near-miss guarantee is made.",
+    "Benchmarks measure this configuration and dataset; they do not establish supplier accuracy."
+  ],
+  "elapsed_seconds": 2.933
+}

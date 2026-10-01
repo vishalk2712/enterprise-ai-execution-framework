@@ -74,6 +74,7 @@ function emptyRow(message) {
 }
 
 function renderState(next) {
+  window.dispatchEvent(new Event("outcome:dataset"));
   state = next || {};
   const data = state.dataset || {};
   const loaded = Boolean(state.dataset);

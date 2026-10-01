@@ -1,3 +1,5 @@
+> v0.2 update: See [current resolution implementation](resolution-v02.md) and [measured benchmark results](benchmark-results.md). The initial v0.1 plan below is retained as project history.
+
 # Development roadmap
 
 This roadmap turns the enterprise execution concept into testable milestones. It is a plan, not a claim that later features already exist. The project starts with supplier identity and spend evidence, using synthetic data and local execution so development can proceed on a laptop without an API key or GPU.

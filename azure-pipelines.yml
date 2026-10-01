@@ -1,0 +1,38 @@
+trigger:
+  - main
+pr:
+  - main
+jobs:
+  - job: Core
+    pool:
+      vmImage: ubuntu-latest
+    strategy:
+      matrix:
+        py310:
+          pythonVersion: '3.10'
+        py312:
+          pythonVersion: '3.12'
+    steps:
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: $(pythonVersion)
+      - script: python -m unittest discover -s tests -v
+        displayName: Test matching, audit and HTTP behavior
+      - script: python -m enterprise_ai demo
+        displayName: Verify synthetic workflow
+  - job: DataContracts
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: '3.12'
+      - script: python -m pip install -r requirements-dbt.txt
+      - script: python -m unittest discover -s tests -p test_contracts.py -v
+        env:
+          OUTCOME_TEST_DBT: '1'
+      - script: python -m enterprise_ai pipeline --suppliers examples/suppliers.csv --spend examples/spend.csv --output-dir .outcome/pipeline
+      - task: PublishPipelineArtifact@1
+        inputs:
+          targetPath: .outcome/pipeline
+          artifact: synthetic-batch-results

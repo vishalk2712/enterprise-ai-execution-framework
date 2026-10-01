@@ -6,6 +6,12 @@ The first working module of an enterprise data-to-outcome framework. Import supp
 
 Built for a laptop with Python 3.10+. No GPU, API key, cloud account, or runtime package installation is required. This is a deterministic software prototype, with a baseline for evaluating future AI components; it does not contain a trained LLM.
 
+## New in v0.2
+
+Soundex and character N-gram retrieval now feed independent multi-feature scoring. Evaluated pairs and human decisions have persistent, separate audit tables, with near-miss retention and bounded blocking-miss sampling. The dashboard can review previous runs. An optional **real dbt/DuckDB gate**, supervised calibration CLI, Azure DevOps pipeline and Fabric notebook prepare the next deployment stage.
+
+Start with the [v0.2 implementation guide](docs/resolution-v02.md), [measured benchmarks](docs/benchmark-results.md), and [enterprise deployment template](docs/enterprise-deployment.md). Default scores remain similarities, not probabilities. No supplier-trained model or cloud deployment is claimed.
+
 ## Try it in two minutes
 
 ```sh
@@ -45,7 +51,7 @@ The distinguishing product hypothesis is the complete chain from **source row �
 
 ## Bring your own CSVs
 
-Use the dashboard's “Bring your own data” panel or the CLI. The complete column sets below are required, in any order. Use UTF-8 and quote values containing commas or newlines.
+Use the dashboard's “Bring your own data” panel or the CLI. The column sets below are required, in any order. Suppliers may additionally include `address` and `aliases` (pipe-separated supplied alternative names). Use UTF-8 and quote values containing commas or newlines.
 
 **suppliers.csv**
 
@@ -77,7 +83,7 @@ python -m unittest discover -s tests -v
 
 Use a full supplier name, source supplier ID, or canonical entity ID for supported scoped questions. This is a bounded rules interface, not general natural-language understanding. Forecasting, currency conversion, arbitrary SQL, time/category filters, and real-world supplier verification are not implemented. Do not interpret a partial evidence list as the full dataset: the answer discloses omitted evidence, and totals are computed before the evidence display budget is applied. Character counts are diagnostics, not a tokenizer measurement or demonstrated API savings.
 
-## Architecture
+## Core local workflow
 
 ```mermaid
 flowchart LR
@@ -115,6 +121,6 @@ The next model should earn its place by beating this baseline on held-out, permi
 
 ## Attribution
 
-This implementation is original code using Python's standard library and browser platform APIs. The concept review links the upstream projects that informed the design. No code, model weights, skills, or datasets from MiniMind, MiroFish, Graphify, OpenViking, Roo Code or Jev are bundled. Those projects retain their own licenses; adopting them later requires a separate compatibility review.
+The default implementation is original code using Python's standard library and browser platform APIs. The optional data-contract environment uses dbt Core, dbt-duckdb and DuckDB under their respective licenses. The concept review links the upstream projects that informed the design. No code, model weights, skills, or datasets from MiniMind, MiroFish, Graphify, OpenViking, Roo Code or Jev are bundled. Those projects retain their own licenses; adopting them later requires a separate compatibility review.
 
 Released under the [MIT License](LICENSE).

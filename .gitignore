@@ -13,3 +13,9 @@ dist/
 .pytest_cache/
 local-data/
 *.docx
+datasets/
+dbt_packages/
+target/
+logs/
+profiles.yml
+*.duckdb*

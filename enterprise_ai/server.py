@@ -4,7 +4,8 @@ from __future__ import annotations
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, parse_qs
+from uuid import uuid4
 
 from .engine import Engine, ValidationError
 
@@ -15,9 +16,15 @@ def demo_csv():
             (root / "spend.csv").read_text(encoding="utf-8"))
 
 
-def make_server(engine: Engine, port: int = 8765):
+def make_server(engine: Engine, port: int = 8765, contract_workdir=None):
+    def import_dataset(suppliers, spend):
+        if contract_workdir:
+            from .contracts import run_dbt_contracts
+            normalized, contract = run_dbt_contracts(suppliers, spend, Path(contract_workdir)/uuid4().hex)
+            return engine.analyze(suppliers, spend, normalized, contract)
+        return engine.analyze(suppliers, spend)
     class Handler(BaseHTTPRequestHandler):
-        server_version = "OutcomeEngine/0.1"
+        server_version = "OutcomeEngine/0.2"
 
         def _host_ok(self):
             return self.headers.get("Host") in {f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}
@@ -41,15 +48,27 @@ def make_server(engine: Engine, port: int = 8765):
             if not self._host_ok():
                 return self.respond(403, {"error": "This application only accepts loopback hostnames."})
             path = urlsplit(self.path).path
+            if path == "/api/evaluations":
+                try:
+                    params = parse_qs(urlsplit(self.path).query)
+                    return self.respond(200, engine.evaluations(params.get("run_id", [None])[0], int(params.get("limit", [100])[0]), int(params.get("offset", [0])[0])))
+                except ValueError as exc:
+                    return self.respond(400, {"error": str(exc)})
+            if path == "/api/resolution-runs":
+                with engine.lock:
+                    runs = [dict(r) for r in engine.db.execute("SELECT * FROM resolution_runs ORDER BY rowid DESC LIMIT 100")]
+                return self.respond(200, {"runs": runs})
+            if path == "/api/audit-export":
+                return self.respond(200, engine.export_audit().encode("utf-8"), "application/x-ndjson; charset=utf-8")
             if path == "/api/state":
                 return self.respond(200, engine.state())
             if path == "/api/portal":
                 return self.respond(200, engine.portal())
             if path == "/api/health":
-                return self.respond(200, {"status": "ok", "mode": "local-deterministic", "version": "0.1.0"})
+                return self.respond(200, {"status": "ok", "mode": "local-deterministic", "version": "0.2.0"})
             if path == "/api/export":
                 return self.respond(200, engine.export_report().encode("utf-8"), "text/markdown; charset=utf-8", True)
-            assets = {"/": ("index.html", "text/html"), "/static/app.js": ("app.js", "text/javascript"), "/static/style.css": ("style.css", "text/css")}
+            assets = {"/": ("index.html", "text/html"), "/static/app.js": ("app.js", "text/javascript"), "/static/reviews.js": ("reviews.js", "text/javascript"), "/static/style.css": ("style.css", "text/css")}
             if path in assets:
                 name, mime = assets[path]
                 return self.respond(200, (Path(__file__).parent / "static" / name).read_bytes(), mime + "; charset=utf-8")
@@ -75,11 +94,13 @@ def make_server(engine: Engine, port: int = 8765):
                     raise ValidationError("JSON object required.")
                 path = urlsplit(self.path).path
                 if path == "/api/demo":
-                    return self.respond(200, engine.analyze(*demo_csv()))
+                    return self.respond(200, import_dataset(*demo_csv()))
                 if path == "/api/analyze":
-                    return self.respond(200, engine.analyze(data.get("suppliers_csv"), data.get("spend_csv")))
+                    return self.respond(200, import_dataset(data.get("suppliers_csv"), data.get("spend_csv")))
                 if path == "/api/query":
                     return self.respond(200, engine.query(data.get("question"), data.get("budget_tokens", 2048)))
+                if path == "/api/reviews":
+                    return self.respond(200, engine.review(data.get("evaluation_id"), data.get("human_label"), data.get("reviewer"), data.get("reason"), data.get("supersedes")))
                 if path == "/api/actions":
                     if data.get("operation", "sync_supplier") != "sync_supplier" or not isinstance(data.get("entity_id"), str):
                         raise ValidationError("Specify entity_id and operation sync_supplier.")

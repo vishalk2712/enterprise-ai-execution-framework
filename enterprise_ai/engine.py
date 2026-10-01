@@ -12,13 +12,14 @@ import json
 import re
 import sqlite3
 import threading
-import unicodedata
 from collections import defaultdict
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from difflib import SequenceMatcher
 from pathlib import Path
 from uuid import uuid4
+from .normalization import identifier, name_key
+from .matching import MatchConfig, evaluate_records
+from . import resolution_audit
 
 
 class ValidationError(ValueError):
@@ -52,20 +53,6 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def identifier(value: str) -> str:
-    normalized = re.sub(r"[\s.\-/]", "", value).upper()
-    if normalized in {"NA", "NIL", "NONE", "NULL", "UNKNOWN", "NOTAVAILABLE", "NOTAPPLICABLE", "MISSING", "TBD"}:
-        return ""
-    return normalized
-
-
-def name_key(value: str) -> str:
-    value = unicodedata.normalize("NFKD", value.casefold())
-    value = "".join(c for c in value if not unicodedata.combining(c))
-    words = re.findall(r"[^\W_]+", value, flags=re.UNICODE)
-    return " ".join(w for w in words if w not in {"limited", "ltd", "inc", "llc", "gmbh", "plc"})
-
-
 def phrase_in(phrase: str, text: str) -> bool:
     return bool(phrase and re.search(r"(?<!\w)" + re.escape(phrase) + r"(?!\w)", text))
 
@@ -80,7 +67,8 @@ def read_csv(text: str, fields: tuple[str, ...], source: str, limit: int) -> lis
     reader = csv.reader(io.StringIO(text.lstrip("\ufeff"), newline=""), strict=True)
     try:
         header = next(reader, None)
-        if not header or len(header) != len(set(header)) or set(header) != set(fields):
+        optional = {"address", "aliases"} if fields == SUPPLIER_FIELDS else set()
+        if not header or len(header) != len(set(header)) or not set(fields) <= set(header) or set(header) - set(fields) - optional:
             raise ValidationError(f"{source}: expected exactly these columns: {', '.join(fields)}.")
         result = []
         previous = reader.line_num
@@ -115,7 +103,12 @@ def evidence(row: dict) -> dict:
 
 
 class Engine:
-    def __init__(self, db_path: str = ":memory:"):
+    def __init__(self, db_path: str = ":memory:", match_config: MatchConfig | None = None, calibration=None):
+        self.match_config = match_config or MatchConfig()
+        self.calibration = calibration
+        if calibration is not None:
+            from .calibration import probability
+            probability(.5, calibration, self.match_config.config_id, "supplier")
         if str(db_path) != ":memory:":
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
@@ -136,6 +129,7 @@ class Engine:
             CREATE TABLE IF NOT EXISTS audit (
                 sequence INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL, event TEXT NOT NULL, payload TEXT NOT NULL);
         """)
+        resolution_audit.migrate(self.db)
 
     def close(self):
         self.db.close()
@@ -153,9 +147,15 @@ class Engine:
             raise ValueError("Unknown internal table")
         return [json.loads(r[0]) for r in self.db.execute(f"SELECT payload FROM {table} ORDER BY 1")]
 
-    def analyze(self, suppliers_csv: str, spend_csv: str) -> dict:
+    def analyze(self, suppliers_csv: str, spend_csv: str, normalized_suppliers=None, contract_manifest=None) -> dict:
         suppliers = read_csv(suppliers_csv, SUPPLIER_FIELDS, "suppliers.csv", 1000)
         invoices = read_csv(spend_csv, SPEND_FIELDS, "spend.csv", 10000)
+        if normalized_suppliers is not None:
+            prepared = {r["supplier_id"]: r for r in normalized_suppliers}
+            if len(prepared) != len(suppliers) or set(prepared) != {r["supplier_id"] for r in suppliers}:
+                raise ValidationError("Upstream contract changed supplier identity keys")
+            for row in suppliers:
+                row.update({k: v for k, v in prepared[row["supplier_id"]].items() if k in {*SUPPLIER_FIELDS, "address", "aliases"}})
         ids, warnings = set(), []
         for row in suppliers:
             if not row["supplier_id"] or not row["name"]:
@@ -196,12 +196,39 @@ class Engine:
                 unique[row["invoice_id"]] = row
         invoices = list(unique.values())
         entities, reviews, memberships = self._resolve(suppliers)
-        snapshot = digest(suppliers_csv + "\0" + spend_csv)
+        evaluations, statistics = evaluate_records(suppliers, self.match_config)
+        if self.calibration is not None:
+            from .calibration import probability
+            statistics["calibration"] = self.calibration
+            for item in evaluations:
+                item["match_probability"] = probability(item["similarity_score"], self.calibration, self.match_config.config_id, "supplier")
+                item["probability_status"] = "calibrated_estimate"
+                item["calibration_model_id"] = self.calibration["model_id"]
+        if contract_manifest:
+            statistics["upstream_contract"] = contract_manifest
+        review_map = {(r["left_id"], r["right_id"]): r for r in reviews}
+        for item in evaluations:
+            pair = item["left_id"], item["right_id"]
+            if memberships[pair[0]] == memberships[pair[1]]:
+                item["authority_grouped"] = True
+                if item["algorithmic_outcome"] != "Excluded_Sampled":
+                    item["algorithmic_outcome"] = "Authority_Grouped"
+            elif item["algorithmic_outcome"] in {"Review_Candidate", "Conflict_Review"}:
+                review_map.setdefault(pair, {"left_id": pair[0], "right_id": pair[1], "left_name": item["left_name"], "right_name": item["right_name"],
+                    "reason": "Multi-feature similarity candidate; no automatic merge. Review identifiers and source evidence."})
+        reviews = list(review_map.values())
+        snapshot_id = digest(suppliers_csv + "\0" + spend_csv)
+        snapshot = digest(snapshot_id + self.match_config.canonical() + json.dumps(contract_manifest, sort_keys=True) + json.dumps(self.calibration, sort_keys=True))
         meta = {"supplier_count": len(suppliers), "invoice_count": len(invoices),
                 "entity_count": len(entities), "currencies": sorted({r["currency"] for r in invoices}),
                 "snapshot": snapshot, "source_hashes": {"suppliers.csv": digest(suppliers_csv), "spend.csv": digest(spend_csv)},
-                "full_characters": len(suppliers_csv) + len(spend_csv), "analyzed_at": now()}
+                "full_characters": len(suppliers_csv) + len(spend_csv), "analyzed_at": now(),
+                "snapshot_id": snapshot_id, "matching_config_id": self.match_config.config_id, "matching_statistics": statistics}
         with self.lock, self.db:
+            meta["resolution_run_id"] = resolution_audit.persist_run(self.db, snapshot_id, self.match_config, evaluations, statistics)
+            evaluation_ids = {(e["left_id"], e["right_id"]): e["evaluation_id"] for e in evaluations}
+            for review in reviews:
+                review["evaluation_id"] = evaluation_ids.get((review["left_id"], review["right_id"]))
             self.db.execute("DELETE FROM invoices")
             self.db.execute("DELETE FROM suppliers")
             self.db.execute("DELETE FROM entities")
@@ -274,20 +301,29 @@ class Engine:
                                 "right_name": by_id[pair[1]]["name"], "reason": reason}
         for left, right, reason in conflicts:
             add_review(left, right, reason)
-        # Block by country and first name token before comparing candidate pairs.
-        name_buckets = defaultdict(list)
-        for row in suppliers:
-            name = name_key(row["name"])
-            if name:
-                name_buckets[(row["country"], name.split()[0])].append(row)
-        for rows in name_buckets.values():
-            for i, left in enumerate(rows):
-                for right in rows[i + 1:]:
-                    if SequenceMatcher(None, name_key(left["name"]), name_key(right["name"])).ratio() >= .88:
-                        pair = tuple(sorted((left["supplier_id"], right["supplier_id"])))
-                        if pair not in review_map:
-                            add_review(*pair, "Similar name in the same country is a review candidate, not identity proof.")
         return sorted(entities, key=lambda e: e["display_name"]), list(review_map.values()), memberships
+
+    def evaluations(self, run_id=None, limit=200, offset=0):
+        with self.lock:
+            selected = run_id or self._meta("dataset", {}).get("resolution_run_id")
+            return resolution_audit.list_evaluations(self.db, selected, limit, offset)
+
+    def review(self, evaluation_id, human_label, reviewer, reason, supersedes=None):
+        with self.lock, self.db:
+            return resolution_audit.record_decision(self.db, evaluation_id, human_label, reviewer, reason, supersedes)
+
+    def export_audit(self):
+        with self.lock:
+            return "\n".join(resolution_audit.export_history(self.db)) + "\n"
+
+    def export_labels(self):
+        with self.lock:
+            rows = self.db.execute("""SELECT e.evaluation_id,e.left_id,e.right_id,e.similarity_score,r.config_id,d.human_label
+              FROM pair_evaluations e JOIN resolution_runs r ON r.run_id=e.run_id
+              JOIN review_decisions d ON d.evaluation_id=e.evaluation_id
+              WHERE d.rowid=(SELECT MAX(d2.rowid) FROM review_decisions d2 WHERE d2.evaluation_id=e.evaluation_id)
+                AND d.human_label IN ('Match','NonMatch')""")
+            return "\n".join(json.dumps({**dict(r), "split": None, "entity_group_ids": [], "instructions": "Assign connected entity groups and disjoint train/validation/test partitions before calibration; deduplicate repeated pairs across runs."}) for r in rows) + "\n"
 
     def state(self) -> dict:
         with self.lock:

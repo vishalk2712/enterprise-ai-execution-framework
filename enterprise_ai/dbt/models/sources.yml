@@ -1,0 +1,25 @@
+version: 2
+sources:
+  - name: intake
+    schema: raw
+    tables:
+      - name: suppliers
+      - name: spend
+models:
+  - name: stg_suppliers
+    columns:
+      - name: supplier_id
+        data_tests: [unique, not_null]
+      - name: name
+        data_tests: [not_null]
+  - name: stg_spend
+    columns:
+      - name: invoice_id
+        data_tests: [not_null]
+      - name: supplier_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_suppliers')
+                field: supplier_id

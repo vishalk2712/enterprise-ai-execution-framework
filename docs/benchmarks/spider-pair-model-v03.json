@@ -1,0 +1,119 @@
+{
+  "experiment": "unused-spider-cohort-v1",
+  "dataset": "SPIDER v2",
+  "domain": "person-spider-v2",
+  "source_url": "https://figshare.com/articles/dataset/SPIDER_v2_Synthetic_Person_Information_Dataset_for_Entity_Resolution/30472712",
+  "input_sha256": "39c4d0fe55e20b12a043c31e3891f872b086c821a5d2017aebc5dc903824c41b",
+  "seed": 1729,
+  "excluded_original_groups": 2000,
+  "excluded_groups_sha256": "b60a52988fbcb82967df6c357045acc0bcf00fa11c31e3ab0ce6a0ebcec7c14b",
+  "selected_groups": 3000,
+  "partition_group_hashes": {
+    "train": "02eed034eb87e849b7c47eab525da28e18c6610883eee15352bf26dc30215935",
+    "validation": "5bcbbecab37a8db9af0ef7dee0b376bb785ba258d9796a90f61cd6b8cc19e03e",
+    "test": "00b8c9f9a71c68ae168ae200972f63bfee272625936759f48abe05638597528d"
+  },
+  "matching_config": {
+    "version": "indexed-features-v2",
+    "normalization_version": "unicode-legal-suffix-v2",
+    "ngram_size": 3,
+    "min_shared_grams": 2,
+    "max_posting": 150,
+    "max_candidates_per_record": 40,
+    "max_evaluations": 200000,
+    "max_feature_chars": 256,
+    "review_threshold": 0.88,
+    "near_miss_floor": 0.8,
+    "excluded_tax_sample_size": 100,
+    "random_seed": 1729,
+    "name_weight": 0.7,
+    "address_weight": 0.2,
+    "postcode_weight": 0.1
+  },
+  "config_id": "0cd7266ffdbcd199642fac5ed3ccb239480be515f99db25c02e85852303b8e80",
+  "model_id": "faa097c4034d9a0b40c82f881352c8ec85a4404ef11172b057bdac3fa3188fd7",
+  "partitions": {
+    "train": {
+      "records": 2236,
+      "candidate_pairs": 55571,
+      "oversized_postings_skipped": 6,
+      "records_with_capped_neighbors": 1922,
+      "all_possible_pairs": 2498730,
+      "groups": 1800,
+      "known_positive_pairs": 436,
+      "retrieved_positive_pairs": 431,
+      "candidate_recall": 0.9885321100917431,
+      "weighted_baseline": {
+        "true_positives": 288,
+        "false_positives": 0,
+        "false_negatives": 148,
+        "precision": 1.0,
+        "recall": 0.6605504587155964,
+        "review_pairs": 288
+      }
+    },
+    "validation": {
+      "records": 769,
+      "candidate_pairs": 14039,
+      "oversized_postings_skipped": 0,
+      "records_with_capped_neighbors": 314,
+      "all_possible_pairs": 295296,
+      "groups": 600,
+      "known_positive_pairs": 169,
+      "retrieved_positive_pairs": 169,
+      "candidate_recall": 1.0,
+      "weighted_baseline": {
+        "true_positives": 116,
+        "false_positives": 0,
+        "false_negatives": 53,
+        "precision": 1.0,
+        "recall": 0.6863905325443787,
+        "review_pairs": 116
+      },
+      "learned_classifier_end_to_end": {
+        "rows": 14039,
+        "positives": 169,
+        "brier_score": 0.0006321701034593883,
+        "true_positives": 169,
+        "false_positives": 4,
+        "false_negatives": 0,
+        "precision": 0.976878612716763,
+        "recall": 1.0,
+        "review_pairs": 173
+      }
+    },
+    "test": {
+      "records": 742,
+      "candidate_pairs": 13045,
+      "oversized_postings_skipped": 0,
+      "records_with_capped_neighbors": 278,
+      "all_possible_pairs": 274911,
+      "groups": 600,
+      "known_positive_pairs": 142,
+      "retrieved_positive_pairs": 142,
+      "candidate_recall": 1.0,
+      "weighted_baseline": {
+        "true_positives": 97,
+        "false_positives": 0,
+        "false_negatives": 45,
+        "precision": 1.0,
+        "recall": 0.6830985915492958,
+        "review_pairs": 97
+      },
+      "learned_classifier_end_to_end": {
+        "rows": 13045,
+        "positives": 142,
+        "brier_score": 0.0008070808069631735,
+        "true_positives": 142,
+        "false_positives": 8,
+        "false_negatives": 0,
+        "precision": 0.9466666666666667,
+        "recall": 1.0,
+        "review_pairs": 150
+      }
+    }
+  },
+  "elapsed_seconds": 66.065,
+  "protocol": "Whole entities split 60/20/20 before independent candidate indexing. Three regularizations and review threshold selected on validation only at observed precision >=0.95; selected model evaluated on test once. End-to-end recall includes positive pairs missed by blocking. No negative subsampling.",
+  "limitations": "Synthetic person cluster labels, including shared-account rule 7, are not verified supplier identities. Pair observations within entities are correlated. No production precision guarantee, independent probability calibration, domain transfer or universal performance claim. The old v0.2 benchmark files are unchanged."
+}

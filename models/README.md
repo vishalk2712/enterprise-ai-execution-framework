@@ -1,5 +1,7 @@
 # Experimental SPIDER pair model
 
+This artifact is frozen from v0.3 (commit `47c8404`). v0.4 changes the matching configuration and feature schema; reproduce this historical experiment from that commit. No incompatible weights are silently migrated or loaded.
+
 `spider-pair-model.json` contains the twelve coefficients, intercept, feature order, configuration fingerprint, validation-selected cutoff and held-out diagnostics of a logistic pair classifier trained from zero initialization. There is no base LLM, adapter or external inference service.
 
 **Purpose:** reproduce a synthetic person entity-resolution experiment and demonstrate a laptop-friendly training path. **Domain:** `person-spider-v2`. **Supplier deployment:** rejected by the engine. Do not change the domain string to bypass that check.

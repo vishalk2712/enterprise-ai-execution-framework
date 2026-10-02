@@ -73,10 +73,10 @@ class EnterpriseAcceptanceTests(unittest.TestCase):
             (ROOT / "examples" / "spend.csv").read_text(encoding="utf-8"),
         )
         self.assertEqual(group_sets(state), {
-            frozenset(("SUP-001", "SUP-002", "SUP-003")),
+            frozenset(("SUP-001", "SUP-002")), frozenset(("SUP-003",)),
             frozenset(("SUP-004",)), frozenset(("SUP-005", "SUP-006")),
             frozenset(("SUP-007",)), frozenset(("SUP-008",)),
-            frozenset(("SUP-009", "SUP-010")),
+            frozenset(("SUP-009",)), frozenset(("SUP-010",)),
         })
         totals = {row["currency"]: Decimal(row["amount"]) for row in state["totals"]}
         self.assertEqual(totals, {
@@ -94,9 +94,9 @@ class EnterpriseAcceptanceTests(unittest.TestCase):
         northbridge = {
             row["currency"]: Decimal(row["amount"])
             for row in state["supplier_spend"]
-            if entities[row["entity_id"]] == frozenset(("SUP-001", "SUP-002", "SUP-003"))
+            if entities[row["entity_id"]] == frozenset(("SUP-001", "SUP-002"))
         }
-        self.assertEqual(northbridge, {"GBP": Decimal("1650.00"), "EUR": Decimal("250.00")})
+        self.assertEqual(northbridge, {"GBP": Decimal("1600.00"), "EUR": Decimal("250.00")})
 
     def test_identical_names_and_empty_ids_never_auto_merge(self):
         state = self.analyze([

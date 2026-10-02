@@ -61,7 +61,7 @@ class LocalHTTPIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(empty["entities"], [])
         demo = self.load_demo()
-        self.assertEqual(len(demo["entities"]), 6)
+        self.assertEqual(len(demo["entities"]), 8)
         status, headers, state = self.request("GET", "/api/state")
         self.assertEqual(status, 200)
         self.assertEqual(state["entities"], demo["entities"])
@@ -95,6 +95,22 @@ class LocalHTTPIntegrationTests(unittest.TestCase):
         status, _, audit = self.request('GET', '/api/audit-export')
         self.assertEqual(status, 200)
         self.assertIn('review_decisions', audit)
+
+    def test_governance_evidence_endpoints_and_input_bounds(self):
+        self.load_demo()
+        self.assertEqual(self.request('GET', '/api/health')[2]['version'], '0.4.0')
+        status, _, graph = self.request('GET', '/api/graph?node_id=supplier:SUP-001&hops=2&limit=20')
+        self.assertEqual(status, 200)
+        self.assertLessEqual(len(graph['nodes']), 20)
+        self.assertEqual(self.request('GET', '/api/graph?node_id=supplier:SUP-001&hops=3')[0], 400)
+        self.assertEqual(self.request('GET', '/api/graph?node_id=unknown')[0], 400)
+        self.assertEqual(self.request('GET', '/api/feedback-summary')[2]['eligible_pairs'], 0)
+        item = self.request('GET', '/api/evaluations?limit=1')[2]['evaluations'][0]
+        status, _, explanation = self.request('GET', '/api/explanation?evaluation_id='+item['evaluation_id'])
+        self.assertEqual(status, 200)
+        self.assertEqual(explanation['backend'], 'deterministic_evidence')
+        self.assertFalse(explanation['model_used'])
+        self.assertEqual(self.request('GET', '/api/explanation?evaluation_id=unknown')[0], 400)
 
     def test_approval_and_execution_update_only_the_local_portal_once(self):
         state = self.load_demo()

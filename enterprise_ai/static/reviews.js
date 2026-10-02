@@ -14,12 +14,12 @@
     const host = document.querySelector('#evaluation-list'); host.replaceChildren();
     document.querySelector('#review-prev').disabled = offset === 0;
     document.querySelector('#review-next').disabled = offset + result.limit >= result.total;
-    message(`${result.total} evaluations · showing ${result.total ? offset+1 : 0}–${Math.min(offset+result.limit,result.total)}. Similarity scores and any separately calibrated probabilities are shown in pair details.`);
+    message(`${result.total} evaluations · showing ${result.total ? offset+1 : 0}–${Math.min(offset+result.limit,result.total)}. Similarity scores and optional model estimates are shown in pair details.`);
     for (const item of result.evaluations) {
       const card = node('details'); card.className = 'evaluation-card';
       card.append(node('summary', `${item.left_name} ↔ ${item.right_name} · ${item.similarity_score.toFixed(3)} · ${item.algorithmic_outcome} · Human: ${item.human_label || 'Unlabeled'}`));
       card.append(node('p', `Pair: ${item.left_id} / ${item.right_id}. ${item.near_miss ? 'Near-miss retained. ' : ''}Methods: ${item.candidate_methods.join(', ')}. Sampling probability: ${item.sampling_probability.toFixed(4)}.`));
-      card.append(node('p', item.match_probability == null ? 'Uncalibrated similarity; no match probability is available.' : `Calibrated match probability estimate: ${(item.match_probability*100).toFixed(1)}%. Model: ${item.calibration_model_id}.`));
+      card.append(node('p', item.match_probability == null ? 'Uncalibrated similarity; no match probability is available.' : item.probability_status === 'model_estimate' ? `Uncalibrated classifier estimate: ${(item.match_probability*100).toFixed(1)}%. Review threshold: ${(item.model_review_threshold*100).toFixed(1)}%. Model: ${item.matching_model_id}.` : `Calibrated match probability estimate: ${(item.match_probability*100).toFixed(1)}%. Model: ${item.calibration_model_id}.`));
       card.append(node('pre', JSON.stringify({features:item.features, normalized_left:item.normalized_left, normalized_right:item.normalized_right, left:item.left_record, right:item.right_record, latest_decision:item.latest_decision},null,2)));
       const form = node('form'); form.className = 'review-form';
       const label = node('select'); label.setAttribute('aria-label','Human label');

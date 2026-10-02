@@ -2,6 +2,8 @@
 
 The matching, calibration, audit and batch modules are independent of HTTP/UI code. The checked-in Azure pipeline and Fabric notebook are deployment templates; neither has been deployed into a cloud workspace.
 
+v0.4 adds a stable dataset namespace, transactional reviewer training evidence, four-cohort calibrated supplier fitting and indexed relationship queries. The optional training job now checks review-based fitting and Parquet exports. See the [v0.4 governance guide](governance-v04.md) for cohort persistence and why refits never activate weights automatically. The notebook's namespace is a cohort key, not tenant authorization; its temporary engine database still does not provide a central review service.
+
 ## Azure DevOps
 
 Create a pipeline pointing at `azure-pipelines.yml`. Core jobs run Python 3.10 and 3.12 tests. The Python 3.12 data-contract job installs pinned requirements, tests real passing/failing dbt builds, runs a synthetic batch and publishes its output artifact. GitHub Actions also runs core tests on Linux/Windows and a Linux dbt job. No production datasets or cloud secrets belong in either CI job.

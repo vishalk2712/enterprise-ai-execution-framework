@@ -35,8 +35,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install -r requirements-ml.txt
-      - run: python -m unittest discover -s tests -p test_pair_model.py -v
+      - run: python -m pip install -r requirements-ml.txt -r requirements-feedback.txt
+      - run: python -m unittest discover -s tests -v
         env:
           OUTCOME_TEST_ML: '1'
+          OUTCOME_TEST_FEEDBACK: '1'
           OPENBLAS_NUM_THREADS: '1'

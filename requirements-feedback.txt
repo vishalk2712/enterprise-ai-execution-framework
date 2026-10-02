@@ -1,0 +1,2 @@
+# Optional Parquet export only; standard-library JSONL/SQLite remain available.
+pyarrow==25.0.1

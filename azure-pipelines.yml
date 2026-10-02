@@ -43,8 +43,9 @@ jobs:
       - task: UsePythonVersion@0
         inputs:
           versionSpec: '3.12'
-      - script: python -m pip install -r requirements-ml.txt
-      - script: python -m unittest discover -s tests -p test_pair_model.py -v
+      - script: python -m pip install -r requirements-ml.txt -r requirements-feedback.txt
+      - script: python -m unittest discover -s tests -v
         env:
           OUTCOME_TEST_ML: '1'
+          OUTCOME_TEST_FEEDBACK: '1'
           OPENBLAS_NUM_THREADS: '1'

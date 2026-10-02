@@ -6,7 +6,15 @@ The first working module of an enterprise data-to-outcome framework. Import supp
 
 Built for a laptop with Python 3.10+. No GPU, API key, cloud account, or runtime package installation is required. This is a deterministic software prototype, with a baseline for evaluating future AI components; it does not contain a trained LLM.
 
-## New in v0.3
+## New in v0.4
+
+Corporate identity governance now requires a consistent clique of shared registration IDs or LEIs. Shared VAT numbers, bank hashes and postcodes generate candidates but cannot establish identity. Parent/subsidiary links remain associations. The synthetic demo now produces **eight entities** with the same spend totals.
+
+Dashboard reviews feed an append-only training evidence table in the same transaction. `python -m enterprise_ai train --from-reviews` fits supplier-domain coefficients and a separate calibration layer using locked train/validation/calibration/test cohorts; it refuses insufficient labels and does not activate weights. Calibrated estimates use 0.75/0.99 policy tiers, with conflict checks and no model-only merges. Indexed two-hop relationship lookup and constrained two-sentence audit rationales are also available.
+
+The new [corporate governance and learning guide](docs/governance-v04.md) includes commands, migration details and limitations. A bounded GLEIF benchmark recovered **134/155 alias pairs during retrieval**, but only **15/155 at the current scoring threshold**, demonstrating why supplier evidence and domain calibration are still needed. No production supplier model, trained LLM or cloud deployment is claimed.
+
+## Historical v0.3 experiment
 
 An optional **trained logistic pair classifier** now uses twelve matching features, with disjoint entity splits, validation-selected review thresholds, domain/configuration checks and model-bound audit evidence. Training needs optional NumPy; inference needs no additional packages. On a separate synthetic person test set it recovered 142/142 matches versus 97/142 for weighted scoring, with eight false positives (94.67% precision). It missed the 95% precision target and is **not deployed on suppliers**.
 
@@ -28,7 +36,7 @@ python -m enterprise_ai serve --demo
 
 On Windows, use `py` instead of `python` if that is your installed Python launcher. Open **http://127.0.0.1:8765**. Stop with Ctrl+C.
 
-1. Inspect the sample's 10 supplier records and 6 proposed entities.
+1. Inspect the sample's 10 supplier records and 8 proposed entities.
 2. Ask “What is our total spend by currency?” and inspect the source citations.
 3. Stage a supplier sync, inspect the payload, approve it, then execute locally.
 4. Open the mock portal to verify the change, or export a Markdown handover report.
@@ -46,7 +54,7 @@ python -m enterprise_ai --db .outcome/experiment.sqlite serve --demo
 | Step | Implemented behavior |
 |---|---|
 | Import | Strict CSV validation; reject conflicting invoice IDs and orphan references; retain the last valid dataset after invalid input |
-| Identity | Group exact registration/tax IDs within a country only when authority IDs do not conflict; name similarity produces review candidates |
+| Identity | Group shared registration IDs/LEIs within a country only after every pair passes direct-identity and conflict checks; tax groups and model-only matches stay separate |
 | Spend | Decimal arithmetic, credit values, exact-duplicate exclusion, totals and supplier rankings per currency |
 | Evidence | Source file and physical row references, dataset hashes, supplier/invoice relationships, bounded evidence excerpts |
 | Questions | Transparent rules for supported identity and spend questions; no external model calls |
@@ -57,7 +65,7 @@ The distinguishing product hypothesis is the complete chain from **source row �
 
 ## Bring your own CSVs
 
-Use the dashboard's “Bring your own data” panel or the CLI. The column sets below are required, in any order. Suppliers may additionally include `address` and `aliases` (pipe-separated supplied alternative names). Use UTF-8 and quote values containing commas or newlines.
+Use the dashboard's “Bring your own data” panel or the CLI. The column sets below are required, in any order. Optional supplier columns are `address`, `aliases` (pipe-separated), `lei`, `parent_lei` and `bank_account_hash` (64 hexadecimal characters). LEI checks validate format/checksum, not registry existence. Bank hashes are linkage evidence, not identity keys or encryption. Use UTF-8 and quote values containing commas or newlines.
 
 **suppliers.csv**
 
@@ -115,11 +123,11 @@ Data and action state persist in `.outcome/engine.sqlite` by default. Imports re
 
 ## Boundaries and next steps
 
-This server binds to `127.0.0.1`. It has no user accounts, tenant isolation or production deployment support. Keep it local. It does not send data to an LLM, run uploaded code, control a browser, or update a real ERP. The mock approval flow demonstrates workflow state, not organizational access control.
+This server binds to `127.0.0.1`. It has no user accounts, tenant isolation or production deployment support. Keep it local. Dashboard queries and rationales use deterministic code. The optional CLI Ollama adapter sends only numerical/operational facts to an already installed local model and validates fact IDs before rendering. The engine does not run uploaded code, control a browser or update a real ERP. The mock approval flow demonstrates workflow state, not organizational access control.
 
 The commercial starting point is a **reviewed supplier-cleanup and spend handover** for procurement teams. First measure false merges, unresolved cases, analyst review time and report usefulness with consenting pilot users. Keep sensitive customer data out of the public repository; `local-data/`, `.outcome/`, secrets and databases are ignored.
 
-The next model should earn its place by beating this baseline on held-out, permissioned examples. A small classifier for ambiguous matches or intent routing may be more useful than training a general chatbot. MiniMind training, graph retrieval, and one bounded browser/API adapter are later experiments, not installed dependencies or promised savings.
+Supplier models must earn their place on independent, permissioned corporate examples. Review-based classifier fitting and indexed graph retrieval are implemented, with optional audit-model integration. MiniMind training and a real destination adapter remain future experiments; no LLM training or token-savings claim is made.
 
 - [Detailed concept review and source verification](docs/idea-review.md)
 - [Phased roadmap and release gates](docs/roadmap.md)
@@ -127,6 +135,6 @@ The next model should earn its place by beating this baseline on held-out, permi
 
 ## Attribution
 
-The default implementation is original code using Python's standard library and browser platform APIs. The optional data-contract environment uses dbt Core, dbt-duckdb and DuckDB under their respective licenses. Optional classifier training uses NumPy. The experimental SPIDER model's source attribution and limits are in its [model card](models/README.md). The concept review links the upstream projects that informed the design. No code, model weights, skills, or datasets from MiniMind, MiroFish, Graphify, OpenViking, Roo Code or Jev are bundled. Those projects retain their own licenses; adopting them later requires a separate compatibility review.
+The default implementation is original code using Python's standard library and browser platform APIs. The optional data-contract environment uses dbt Core, dbt-duckdb and DuckDB under their respective licenses. Classifier training uses NumPy; optional Parquet export uses Apache Arrow. The experimental SPIDER model's attribution and limits are in its [model card](models/README.md), and the corporate benchmark's GLEIF attribution is in the [v0.4 guide](docs/governance-v04.md). No code, model weights, skills or raw datasets from MiniMind, MiroFish, Graphify, OpenViking, Roo Code or Jev are bundled. Those projects retain their own licenses.
 
 Released under the [MIT License](LICENSE).

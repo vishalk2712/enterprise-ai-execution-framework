@@ -1,0 +1,68 @@
+{
+  "version": "corporate-alias-benchmark-v1",
+  "dataset": "GLEIF bounded active legal-name aliases",
+  "source": "https://www.gleif.org/en/lei-data/gleif-api",
+  "license": "CC0 (GLEIF LEI Data Terms of Use)",
+  "provenance": {
+    "registry_entities": 2000,
+    "alias_records": 108,
+    "input_sha256": "9ad2ccfb8070f1fb71e36b58d5f961303f729d98452d02eda51f0ed6a3855235",
+    "pages": 20
+  },
+  "records": 2108,
+  "positive_reference_pairs": 155,
+  "config": {
+    "version": "indexed-governance-v4",
+    "normalization_version": "unicode-legal-suffix-v2",
+    "ngram_size": 3,
+    "min_shared_grams": 2,
+    "max_posting": 150,
+    "max_candidates_per_record": 40,
+    "max_evaluations": 200000,
+    "max_feature_chars": 256,
+    "review_threshold": 0.88,
+    "near_miss_floor": 0.8,
+    "excluded_tax_sample_size": 100,
+    "random_seed": 1729,
+    "name_weight": 0.7,
+    "address_weight": 0.2,
+    "postcode_weight": 0.1,
+    "graph_blocking": true
+  },
+  "config_id": "74f6786c81670e201c7a78e177652bb9fc0b29cf08a11749b5825db44136515c",
+  "statistics": {
+    "records": 2108,
+    "candidate_pairs": 58189,
+    "oversized_postings_skipped": 20,
+    "records_with_capped_neighbors": 1757,
+    "all_possible_pairs": 2220778
+  },
+  "baseline": {
+    "candidate_pairs": 842,
+    "candidate_recall": 0.2903225806451613,
+    "true_positives": 9,
+    "false_positives": 49,
+    "false_negatives": 146,
+    "precision_on_labeled_pairs": 0.15517241379310345,
+    "recall_on_labeled_pairs": 0.05806451612903226
+  },
+  "indexed": {
+    "candidate_pairs": 58189,
+    "candidate_recall": 0.864516129032258,
+    "true_positives": 15,
+    "false_positives": 36,
+    "false_negatives": 140,
+    "precision_on_labeled_pairs": 0.29411764705882354,
+    "recall_on_labeled_pairs": 0.0967741935483871
+  },
+  "elapsed_seconds": 22.146,
+  "trained_model": false,
+  "limitations": [
+    "Convenience sample sorted by LEI, not representative supplier procurement data.",
+    "Aliases are registry names attached to one entity, not independent source-system duplicate records.",
+    "Addresses and postcodes are copied from the registry entity across its aliases, making scoring optimistic.",
+    "Identifiers and alias fields are masked from matching; LEI equality labels this closed cohort only.",
+    "Different LEIs are treated as different registry identities; historical multiple-LEI situations are not adjudicated.",
+    "No weights fitted, no supplier model promoted, no 100k-row performance claim, no raw registry records published."
+  ]
+}

@@ -115,6 +115,7 @@ function renderEntities() {
     basis.append(element("small", "", safeString(entity.match_basis)));
     const identifiers = [
       (entity.registration_ids || []).length ? `Registration: ${safeString(entity.registration_ids)}` : "",
+      (entity.leis || []).length ? `LEI: ${safeString(entity.leis)}` : "",
       (entity.tax_ids || []).length ? `Tax: ${safeString(entity.tax_ids)}` : "",
     ].filter(Boolean).join(" · ");
     if (identifiers) basis.title = identifiers;

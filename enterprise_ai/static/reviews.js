@@ -10,7 +10,9 @@
   async function loadRows() {
     const current = ++revision;
     const result = await get(`/api/evaluations?limit=25&offset=${offset}${runId ? '&run_id='+encodeURIComponent(runId) : ''}`);
+    const feedback = await get('/api/feedback-summary');
     if (current !== revision) return;
+    document.querySelector('#feedback-status').textContent = `${feedback.eligible_pairs} eligible reviewed pairs · ${feedback.review_events} saved decisions · ${feedback.unsure_pairs} unsure · ${feedback.conflicting_pairs.length} inconsistent pairs excluded. Models remain inactive until explicitly loaded.`;
     const host = document.querySelector('#evaluation-list'); host.replaceChildren();
     document.querySelector('#review-prev').disabled = offset === 0;
     document.querySelector('#review-next').disabled = offset + result.limit >= result.total;
@@ -19,7 +21,16 @@
       const card = node('details'); card.className = 'evaluation-card';
       card.append(node('summary', `${item.left_name} ↔ ${item.right_name} · ${item.similarity_score.toFixed(3)} · ${item.algorithmic_outcome} · Human: ${item.human_label || 'Unlabeled'}`));
       card.append(node('p', `Pair: ${item.left_id} / ${item.right_id}. ${item.near_miss ? 'Near-miss retained. ' : ''}Methods: ${item.candidate_methods.join(', ')}. Sampling probability: ${item.sampling_probability.toFixed(4)}.`));
-      card.append(node('p', item.match_probability == null ? 'Uncalibrated similarity; no match probability is available.' : item.probability_status === 'model_estimate' ? `Uncalibrated classifier estimate: ${(item.match_probability*100).toFixed(1)}%. Review threshold: ${(item.model_review_threshold*100).toFixed(1)}%. Model: ${item.matching_model_id}.` : `Calibrated match probability estimate: ${(item.match_probability*100).toFixed(1)}%. Model: ${item.calibration_model_id}.`));
+      card.append(node('p', item.match_probability == null ? 'Uncalibrated similarity; no match probability is available.' : item.probability_status === 'model_estimate' ? `Uncalibrated classifier estimate: ${(item.match_probability*100).toFixed(1)}%. Review threshold: ${(item.model_review_threshold*100).toFixed(1)}%. Model: ${item.matching_model_id}.` : `Calibrated candidate-pair estimate: ${(item.match_probability*100).toFixed(1)}%. Model: ${item.matching_model_id || item.calibration_model_id}. Observed calibration does not guarantee precision.`));
+      card.append(node('p', `Operational tier: ${item.operational_decision?.tier || 'Historical evaluation'}. ${item.operational_decision?.reasons.join('; ') || 'This run predates the corporate policy.'}`));
+      const rationale = node('p','Open this pair to load its evidence rationale.'); card.append(rationale);
+      card.addEventListener('toggle', async () => {
+        if (card.open && !rationale.dataset.loaded) {
+          rationale.dataset.loaded='1';
+          try { const explanation=await get('/api/explanation?evaluation_id='+encodeURIComponent(item.evaluation_id)); rationale.textContent=explanation.text; }
+          catch(error) { rationale.textContent=error.message; delete rationale.dataset.loaded; }
+        }
+      });
       card.append(node('pre', JSON.stringify({features:item.features, model_features:item.model_features, feature_schema:item.feature_schema, heuristic_outcome:item.heuristic_outcome, normalized_left:item.normalized_left, normalized_right:item.normalized_right, left:item.left_record, right:item.right_record, latest_decision:item.latest_decision},null,2)));
       const form = node('form'); form.className = 'review-form';
       const label = node('select'); label.setAttribute('aria-label','Human label');
@@ -49,6 +60,16 @@
   document.querySelector('#review-prev').addEventListener('click',()=>{offset=Math.max(0,offset-25);loadRows().catch(e=>message(e.message));});
   document.querySelector('#review-next').addEventListener('click',()=>{offset+=25;loadRows().catch(e=>message(e.message));});
   document.querySelector('#review-refresh').addEventListener('click',()=>refreshRuns().catch(e=>message(e.message)));
+  document.querySelector('#knowledge-form').addEventListener('submit', async event => {
+    event.preventDefault(); const host=document.querySelector('#knowledge-result'); host.replaceChildren();
+    try {
+      const result=await get('/api/graph?node_id='+encodeURIComponent('supplier:'+document.querySelector('#knowledge-supplier').value.trim())+'&hops=2&limit=60');
+      host.append(node('p',`${result.nodes.length} nodes · ${result.edges.length} relationships${result.truncated ? ' · bounded results truncated' : ''}. ${result.note}`));
+      const names=new Map(result.nodes.map(n=>[n.id,n.label])); const list=node('ul');
+      for (const edge of result.edges) list.append(node('li',`${names.get(edge.source)} → ${edge.relation.replaceAll('_',' ').toLowerCase()} → ${names.get(edge.target)}`));
+      host.append(list);
+    } catch(error) { host.append(node('p',error.message)); }
+  });
   window.addEventListener('outcome:dataset',()=>refreshRuns().catch(e=>message(e.message)));
   refreshRuns().catch(e=>message(e.message));
 })();

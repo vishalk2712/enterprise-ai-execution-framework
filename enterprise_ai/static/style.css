@@ -11,3 +11,8 @@ progress.bar-track{appearance:none;-webkit-appearance:none;width:100%;border:0;d
 .evaluation-card summary { cursor:pointer; line-height:1.6; overflow-wrap:anywhere; }
 .evaluation-card pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:300px; overflow:auto; background:#f6f7f1; padding:16px; }
 .review-form input { flex:1; min-width:180px; }
+#knowledge-form { display:flex; flex-wrap:wrap; align-items:end; gap:14px; margin:16px 0; }
+#knowledge-form label { display:flex; flex-direction:column; gap:8px; }
+#knowledge-form input { border:1px solid var(--line); padding:10px; border-radius:6px; max-width:100%; }
+#knowledge-result { font-size:12px; line-height:1.7; overflow-wrap:anywhere; }
+#knowledge-result ul { max-height:280px; overflow:auto; padding-left:22px; }

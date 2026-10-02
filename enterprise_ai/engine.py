@@ -103,9 +103,15 @@ def evidence(row: dict) -> dict:
 
 
 class Engine:
-    def __init__(self, db_path: str = ":memory:", match_config: MatchConfig | None = None, calibration=None):
+    def __init__(self, db_path: str = ":memory:", match_config: MatchConfig | None = None, calibration=None, pair_model=None):
         self.match_config = match_config or MatchConfig()
         self.calibration = calibration
+        self.pair_model = pair_model
+        if pair_model is not None:
+            from .pair_model import validate_artifact
+            validate_artifact(pair_model, self.match_config.config_id, "supplier")
+            if calibration is not None:
+                raise ValueError("Choose pair_model or weighted-score calibration; they estimate different quantities")
         if calibration is not None:
             from .calibration import probability
             probability(.5, calibration, self.match_config.config_id, "supplier")
@@ -197,6 +203,10 @@ class Engine:
         invoices = list(unique.values())
         entities, reviews, memberships = self._resolve(suppliers)
         evaluations, statistics = evaluate_records(suppliers, self.match_config)
+        if self.pair_model is not None:
+            from .pair_model import apply_model
+            apply_model(evaluations, self.pair_model, self.match_config)
+            statistics["pair_model"] = self.pair_model
         if self.calibration is not None:
             from .calibration import probability
             statistics["calibration"] = self.calibration
@@ -219,6 +229,8 @@ class Engine:
         reviews = list(review_map.values())
         snapshot_id = digest(suppliers_csv + "\0" + spend_csv)
         snapshot = digest(snapshot_id + self.match_config.canonical() + json.dumps(contract_manifest, sort_keys=True) + json.dumps(self.calibration, sort_keys=True))
+        if self.pair_model is not None:
+            snapshot = digest(snapshot + json.dumps(self.pair_model, sort_keys=True))
         meta = {"supplier_count": len(suppliers), "invoice_count": len(invoices),
                 "entity_count": len(entities), "currencies": sorted({r["currency"] for r in invoices}),
                 "snapshot": snapshot, "source_hashes": {"suppliers.csv": digest(suppliers_csv), "spend.csv": digest(spend_csv)},
@@ -318,12 +330,26 @@ class Engine:
 
     def export_labels(self):
         with self.lock:
-            rows = self.db.execute("""SELECT e.evaluation_id,e.left_id,e.right_id,e.similarity_score,r.config_id,d.human_label
+            rows = self.db.execute("""SELECT e.evaluation_id,e.left_id,e.right_id,e.similarity_score,e.payload_json,
+              r.config_id,r.config_json,r.snapshot_id,d.human_label
               FROM pair_evaluations e JOIN resolution_runs r ON r.run_id=e.run_id
               JOIN review_decisions d ON d.evaluation_id=e.evaluation_id
               WHERE d.rowid=(SELECT MAX(d2.rowid) FROM review_decisions d2 WHERE d2.evaluation_id=e.evaluation_id)
                 AND d.human_label IN ('Match','NonMatch')""")
-            return "\n".join(json.dumps({**dict(r), "split": None, "entity_group_ids": [], "instructions": "Assign connected entity groups and disjoint train/validation/test partitions before calibration; deduplicate repeated pairs across runs."}) for r in rows) + "\n"
+            from .pair_model import FEATURE_SCHEMA, feature_vector, fingerprint
+            exported = []
+            for row in rows:
+                item = dict(row)
+                evaluation = json.loads(item.pop("payload_json"))
+                config = json.loads(item.pop("config_json"))
+                record_keys = [fingerprint({k: record.get(k, "") for k in
+                    ("supplier_id", "name", "country", "registration_id", "tax_id", "postcode", "address", "aliases")})
+                    for record in (evaluation["left_record"], evaluation["right_record"])]
+                item.update(feature_schema=FEATURE_SCHEMA, model_features=feature_vector(evaluation, config["max_feature_chars"]),
+                            record_keys=record_keys, pair_key=fingerprint(sorted(record_keys)), split=None, entity_group_ids=[],
+                            instructions="Deduplicate pair_key across runs; assign connected groups for BOTH endpoints and disjoint train/validation/test splits. Reviewers' labels do not authorize actions.")
+                exported.append(json.dumps(item))
+            return "\n".join(exported) + ("\n" if exported else "")
 
     def state(self) -> dict:
         with self.lock:

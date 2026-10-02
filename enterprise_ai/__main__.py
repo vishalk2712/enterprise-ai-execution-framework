@@ -13,6 +13,7 @@ def main():
     parser.add_argument("--db", default=".outcome/engine.sqlite", help="Local SQLite database path")
     parser.add_argument("--match-config", help="JSON MatchConfig overrides")
     parser.add_argument("--calibration", help="Reviewed supplier-domain calibration artifact; never enables auto-merges")
+    parser.add_argument("--pair-model", help="Explicit supplier-domain pair classifier; routes human review only")
     sub = parser.add_subparsers(dest="command", required=True)
     demo = sub.add_parser("demo", help="Analyze synthetic data and export a report")
     demo.add_argument("--output", default=".outcome/demo-report.md")
@@ -46,6 +47,11 @@ def main():
     calibrate.add_argument("--labels", required=True)
     calibrate.add_argument("--domain", required=True)
     calibrate.add_argument("--output", required=True)
+    train = sub.add_parser("train-pair-model", help="Train an optional multivariate classifier from verified, grouped labels")
+    train.add_argument("--labels", required=True)
+    train.add_argument("--domain", required=True)
+    train.add_argument("--output", required=True)
+    train.add_argument("--target-precision", type=float, default=.95, help="Observed validation precision target; not a guarantee")
     args = parser.parse_args()
     from .matching import MatchConfig
     try:
@@ -53,7 +59,8 @@ def main():
     except (ValueError, TypeError, OSError) as exc:
         parser.exit(2, f"Invalid matching configuration: {exc}\n")
     try:
-        engine = Engine(args.db, config, json.loads(Path(args.calibration).read_text()) if args.calibration else None)
+        engine = Engine(args.db, config, json.loads(Path(args.calibration).read_text()) if args.calibration else None,
+                        json.loads(Path(args.pair_model).read_text()) if args.pair_model else None)
     except (ValueError, TypeError, OSError) as exc:
         parser.exit(2, f"Invalid engine configuration: {exc}\n")
     try:
@@ -72,7 +79,13 @@ def main():
             print(json.dumps(engine.review(args.evaluation_id, args.label, args.reviewer, args.reason, args.supersedes), indent=2))
         elif args.command == "pipeline":
             from .pipeline import run_pipeline
-            print(json.dumps(run_pipeline(args.suppliers, args.spend, args.output_dir, not args.without_dbt, config, engine.calibration), indent=2))
+            print(json.dumps(run_pipeline(args.suppliers, args.spend, args.output_dir, not args.without_dbt, config, engine.calibration, engine.pair_model), indent=2))
+        elif args.command == "train-pair-model":
+            from .pair_model import fit_pair_model
+            rows = [json.loads(line) for line in Path(args.labels).read_text(encoding="utf-8").splitlines() if line.strip()]
+            artifact = fit_pair_model(rows, config.config_id, args.domain, args.target_precision)
+            Path(args.output).write_text(json.dumps(artifact, indent=2), encoding="utf-8")
+            print(json.dumps({"model_id": artifact["model_id"], "validation": artifact["validation"], "test": artifact["test"]}, indent=2))
         elif args.command == "calibrate":
             from .calibration import fit_calibration
             rows = [json.loads(line) for line in Path(args.labels).read_text(encoding="utf-8").splitlines() if line.strip()]

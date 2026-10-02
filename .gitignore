@@ -19,3 +19,5 @@ target/
 logs/
 profiles.yml
 *.duckdb*
+/outputs/
+/work/

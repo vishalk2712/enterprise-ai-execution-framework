@@ -6,7 +6,13 @@ The first working module of an enterprise data-to-outcome framework. Import supp
 
 Built for a laptop with Python 3.10+. No GPU, API key, cloud account, or runtime package installation is required. This is a deterministic software prototype, with a baseline for evaluating future AI components; it does not contain a trained LLM.
 
-## New in v0.2
+## New in v0.3
+
+An optional **trained logistic pair classifier** now uses twelve matching features, with disjoint entity splits, validation-selected review thresholds, domain/configuration checks and model-bound audit evidence. Training needs optional NumPy; inference needs no additional packages. On a separate synthetic person test set it recovered 142/142 matches versus 97/142 for weighted scoring, with eight false positives (94.67% precision). It missed the 95% precision target and is **not deployed on suppliers**.
+
+Read the [v0.3 training and evaluation guide](docs/pair-model-v03.md) and [experimental model card](models/README.md). The default app remains deterministic, and there is no trained LLM. Human reviews and action approvals remain required.
+
+## Included from v0.2
 
 Soundex and character N-gram retrieval now feed independent multi-feature scoring. Evaluated pairs and human decisions have persistent, separate audit tables, with near-miss retention and bounded blocking-miss sampling. The dashboard can review previous runs. An optional **real dbt/DuckDB gate**, supervised calibration CLI, Azure DevOps pipeline and Fabric notebook prepare the next deployment stage.
 
@@ -121,6 +127,6 @@ The next model should earn its place by beating this baseline on held-out, permi
 
 ## Attribution
 
-The default implementation is original code using Python's standard library and browser platform APIs. The optional data-contract environment uses dbt Core, dbt-duckdb and DuckDB under their respective licenses. The concept review links the upstream projects that informed the design. No code, model weights, skills, or datasets from MiniMind, MiroFish, Graphify, OpenViking, Roo Code or Jev are bundled. Those projects retain their own licenses; adopting them later requires a separate compatibility review.
+The default implementation is original code using Python's standard library and browser platform APIs. The optional data-contract environment uses dbt Core, dbt-duckdb and DuckDB under their respective licenses. Optional classifier training uses NumPy. The experimental SPIDER model's source attribution and limits are in its [model card](models/README.md). The concept review links the upstream projects that informed the design. No code, model weights, skills, or datasets from MiniMind, MiroFish, Graphify, OpenViking, Roo Code or Jev are bundled. Those projects retain their own licenses; adopting them later requires a separate compatibility review.
 
 Released under the [MIT License](LICENSE).

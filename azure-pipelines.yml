@@ -36,3 +36,15 @@ jobs:
         inputs:
           targetPath: .outcome/pipeline
           artifact: synthetic-batch-results
+  - job: PairModel
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: '3.12'
+      - script: python -m pip install -r requirements-ml.txt
+      - script: python -m unittest discover -s tests -p test_pair_model.py -v
+        env:
+          OUTCOME_TEST_ML: '1'
+          OPENBLAS_NUM_THREADS: '1'

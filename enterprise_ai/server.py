@@ -24,7 +24,7 @@ def make_server(engine: Engine, port: int = 8765, contract_workdir=None):
             return engine.analyze(suppliers, spend, normalized, contract)
         return engine.analyze(suppliers, spend)
     class Handler(BaseHTTPRequestHandler):
-        server_version = "OutcomeEngine/0.2"
+        server_version = "OutcomeEngine/0.4"
 
         def _host_ok(self):
             return self.headers.get("Host") in {f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}
@@ -48,6 +48,16 @@ def make_server(engine: Engine, port: int = 8765, contract_workdir=None):
             if not self._host_ok():
                 return self.respond(403, {"error": "This application only accepts loopback hostnames."})
             path = urlsplit(self.path).path
+            if path in {"/api/graph", "/api/explanation", "/api/feedback-summary"}:
+                try:
+                    params = parse_qs(urlsplit(self.path).query)
+                    if path == "/api/feedback-summary":
+                        return self.respond(200, engine.feedback_summary())
+                    if path == "/api/explanation":
+                        return self.respond(200, engine.explain(params.get("evaluation_id", [""])[0]))
+                    return self.respond(200, engine.graph_neighbors(params.get("node_id", [""])[0], int(params.get("hops", [2])[0]), int(params.get("limit", [100])[0]), params.get("relation", [None])[0]))
+                except ValueError as exc:
+                    return self.respond(400, {"error": str(exc)})
             if path == "/api/evaluations":
                 try:
                     params = parse_qs(urlsplit(self.path).query)
@@ -65,7 +75,7 @@ def make_server(engine: Engine, port: int = 8765, contract_workdir=None):
             if path == "/api/portal":
                 return self.respond(200, engine.portal())
             if path == "/api/health":
-                return self.respond(200, {"status": "ok", "mode": "local-deterministic", "version": "0.2.0"})
+                return self.respond(200, {"status": "ok", "mode": "local-deterministic", "version": "0.4.0"})
             if path == "/api/export":
                 return self.respond(200, engine.export_report().encode("utf-8"), "text/markdown; charset=utf-8", True)
             assets = {"/": ("index.html", "text/html"), "/static/app.js": ("app.js", "text/javascript"), "/static/reviews.js": ("reviews.js", "text/javascript"), "/static/style.css": ("style.css", "text/css")}

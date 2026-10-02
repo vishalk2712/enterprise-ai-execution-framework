@@ -67,7 +67,7 @@ def read_csv(text: str, fields: tuple[str, ...], source: str, limit: int) -> lis
     reader = csv.reader(io.StringIO(text.lstrip("\ufeff"), newline=""), strict=True)
     try:
         header = next(reader, None)
-        optional = {"address", "aliases"} if fields == SUPPLIER_FIELDS else set()
+        optional = {"address", "aliases", "lei", "parent_lei", "bank_account_hash"} if fields == SUPPLIER_FIELDS else set()
         if not header or len(header) != len(set(header)) or not set(fields) <= set(header) or set(header) - set(fields) - optional:
             raise ValidationError(f"{source}: expected exactly these columns: {', '.join(fields)}.")
         result = []
@@ -103,7 +103,10 @@ def evidence(row: dict) -> dict:
 
 
 class Engine:
-    def __init__(self, db_path: str = ":memory:", match_config: MatchConfig | None = None, calibration=None, pair_model=None):
+    def __init__(self, db_path: str = ":memory:", match_config: MatchConfig | None = None, calibration=None, pair_model=None, dataset_namespace="local"):
+        if not isinstance(dataset_namespace, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", dataset_namespace):
+            raise ValueError("dataset_namespace must be 1..80 letters, digits, underscores or hyphens")
+        self.dataset_namespace = dataset_namespace
         self.match_config = match_config or MatchConfig()
         self.calibration = calibration
         self.pair_model = pair_model
@@ -136,6 +139,9 @@ class Engine:
                 sequence INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL, event TEXT NOT NULL, payload TEXT NOT NULL);
         """)
         resolution_audit.migrate(self.db)
+        from . import feedback, knowledge_graph
+        feedback.migrate(self.db)
+        knowledge_graph.migrate(self.db)
 
     def close(self):
         self.db.close()
@@ -161,7 +167,7 @@ class Engine:
             if len(prepared) != len(suppliers) or set(prepared) != {r["supplier_id"] for r in suppliers}:
                 raise ValidationError("Upstream contract changed supplier identity keys")
             for row in suppliers:
-                row.update({k: v for k, v in prepared[row["supplier_id"]].items() if k in {*SUPPLIER_FIELDS, "address", "aliases"}})
+                row.update({k: v for k, v in prepared[row["supplier_id"]].items() if k in {*SUPPLIER_FIELDS, "address", "aliases", "lei", "parent_lei", "bank_account_hash"}})
         ids, warnings = set(), []
         for row in suppliers:
             if not row["supplier_id"] or not row["name"]:
@@ -177,6 +183,16 @@ class Engine:
                 row[field] = identifier(supplied)
                 if supplied and not row[field]:
                     warnings.append(f"suppliers.csv:{row['_line']}: {field} missing-value placeholder ignored for matching.")
+            from .governance import valid_lei
+            for field in ("lei", "parent_lei"):
+                row[field] = identifier(row.get(field, ""))
+                if row[field] and not valid_lei(row[field]):
+                    raise ValidationError(f"suppliers.csv:{row['_line']}: invalid {field} format or checksum; supplied IDs are not registry-verified.")
+            row["bank_account_hash"] = row.get("bank_account_hash", "").lower()
+            if row["lei"] and row["lei"] == row["parent_lei"]:
+                raise ValidationError("A legal entity cannot be its own parent")
+            if row["bank_account_hash"] and not re.fullmatch(r"[0-9a-f]{64}", row["bank_account_hash"]):
+                raise ValidationError(f"suppliers.csv:{row['_line']}: bank_account_hash must be a SHA-256 hexadecimal hash; do not upload account numbers.")
         unique = {}
         for row in invoices:
             if not row["invoice_id"] or row["supplier_id"] not in ids:
@@ -216,6 +232,9 @@ class Engine:
                 item["calibration_model_id"] = self.calibration["model_id"]
         if contract_manifest:
             statistics["upstream_contract"] = contract_manifest
+        from .governance import annotate, VERSION as POLICY_VERSION
+        annotate(evaluations, suppliers)
+        statistics.update(dataset_namespace=self.dataset_namespace, governance_policy=POLICY_VERSION)
         review_map = {(r["left_id"], r["right_id"]): r for r in reviews}
         for item in evaluations:
             pair = item["left_id"], item["right_id"]
@@ -223,6 +242,8 @@ class Engine:
                 item["authority_grouped"] = True
                 if item["algorithmic_outcome"] != "Excluded_Sampled":
                     item["algorithmic_outcome"] = "Authority_Grouped"
+                item["cluster_validation"] = "consistent_direct_identity_clique"
+                item["operational_decision"] = {"tier": "Direct_Identity_Grouped", "reasons": ["Deterministic legal identity keys and whole-cluster consistency passed; the model did not authorize this group"], "auto_merge_eligible": False}
             elif item["algorithmic_outcome"] in {"Review_Candidate", "Conflict_Review"}:
                 review_map.setdefault(pair, {"left_id": pair[0], "right_id": pair[1], "left_name": item["left_name"], "right_name": item["right_name"],
                     "reason": "Multi-feature similarity candidate; no automatic merge. Review identifiers and source evidence."})
@@ -231,6 +252,7 @@ class Engine:
         snapshot = digest(snapshot_id + self.match_config.canonical() + json.dumps(contract_manifest, sort_keys=True) + json.dumps(self.calibration, sort_keys=True))
         if self.pair_model is not None:
             snapshot = digest(snapshot + json.dumps(self.pair_model, sort_keys=True))
+        snapshot = digest(snapshot + self.dataset_namespace + POLICY_VERSION)
         meta = {"supplier_count": len(suppliers), "invoice_count": len(invoices),
                 "entity_count": len(entities), "currencies": sorted({r["currency"] for r in invoices}),
                 "snapshot": snapshot, "source_hashes": {"suppliers.csv": digest(suppliers_csv), "spend.csv": digest(spend_csv)},
@@ -250,6 +272,8 @@ class Engine:
                 self.db.execute("INSERT INTO suppliers VALUES(?,?,?)", (row["supplier_id"], memberships[row["supplier_id"]], json.dumps(row)))
             for row in invoices:
                 self.db.execute("INSERT INTO invoices VALUES(?,?,?)", (row["invoice_id"], row["supplier_id"], json.dumps(row)))
+            from .knowledge_graph import rebuild
+            meta["knowledge_graph"] = rebuild(self.db, suppliers, invoices, entities, memberships)
             for key, value in (("dataset", meta), ("reviews", reviews), ("warnings", warnings)):
                 self.db.execute("INSERT OR REPLACE INTO metadata VALUES(?,?)", (key, json.dumps(value)))
             self.db.execute("UPDATE actions SET status='stale' WHERE snapshot<>? AND status IN ('pending','approved')", (snapshot,))
@@ -258,6 +282,7 @@ class Engine:
 
     @staticmethod
     def _resolve(suppliers: list[dict]):
+        from .governance import validate_cluster
         by_id = {r["supplier_id"]: r for r in suppliers}
         parent = {s: s for s in by_id}
 
@@ -271,7 +296,7 @@ class Engine:
         conflicts = []
         # Process authoritative buckets as a whole to avoid order-dependent partial
         # merges when a shared tax ID bridges contradictory registration IDs.
-        for field in ("registration_id", "tax_id"):
+        for field in ("registration_id", "lei"):
             buckets = defaultdict(list)
             for row in suppliers:
                 if row[field]:
@@ -281,10 +306,10 @@ class Engine:
                     continue
                 roots = {root(m) for m in members}
                 group = [s for s in by_id if root(s) in roots]
-                conflict = any(len({by_id[s][f] for s in group if by_id[s][f]}) > 1 for f in ("registration_id", "tax_id"))
-                if conflict:
+                checked = validate_cluster([by_id[s] for s in group])
+                if not checked["valid"]:
                     for left, right in zip(sorted(members), sorted(members)[1:]):
-                        conflicts.append((left, right, "Shared identifier conflicts with other authority IDs; review required."))
+                        conflicts.append((left, right, "Cluster consistency failed: " + ", ".join(checked["reasons"])))
                     continue
                 representative = min(group)
                 for s in group:
@@ -303,6 +328,7 @@ class Engine:
                              "country": by_id[group[0]]["country"], "source_supplier_ids": group,
                              "match_basis": sorted({r for s in group for r in reasons[s]}) or ["Single source record; no automatic match"],
                              "registration_ids": sorted({by_id[s]["registration_id"] for s in group if by_id[s]["registration_id"]}),
+                             "leis": sorted({by_id[s]["lei"] for s in group if by_id[s]["lei"]}),
                              "tax_ids": sorted({by_id[s]["tax_id"] for s in group if by_id[s]["tax_id"]})})
         review_map = {}
         def add_review(left, right, reason):
@@ -313,7 +339,14 @@ class Engine:
                                 "right_name": by_id[pair[1]]["name"], "reason": reason}
         for left, right, reason in conflicts:
             add_review(left, right, reason)
-        return sorted(entities, key=lambda e: e["display_name"]), list(review_map.values()), memberships
+        tax_buckets = defaultdict(list)
+        for row in suppliers:
+            if row["tax_id"]:
+                tax_buckets[(row["country"], row["tax_id"])].append(row["supplier_id"])
+        for members in tax_buckets.values():
+            for left, right in zip(sorted(members), sorted(members)[1:]):
+                add_review(left, right, "Shared tax ID can represent a VAT group; direct legal identity evidence is required.")
+        return sorted(entities, key=lambda e: (e["display_name"], e["entity_id"])), list(review_map.values()), memberships
 
     def evaluations(self, run_id=None, limit=200, offset=0):
         with self.lock:
@@ -322,7 +355,31 @@ class Engine:
 
     def review(self, evaluation_id, human_label, reviewer, reason, supersedes=None):
         with self.lock, self.db:
-            return resolution_audit.record_decision(self.db, evaluation_id, human_label, reviewer, reason, supersedes)
+            decision = resolution_audit.record_decision(self.db, evaluation_id, human_label, reviewer, reason, supersedes)
+            from .feedback import record_feedback
+            record_feedback(self.db, decision)
+            return decision
+
+    def feedback_summary(self):
+        from .feedback import current_samples
+        with self.lock:
+            _, stats = current_samples(self.db, self.match_config.config_id, self.dataset_namespace)
+            return {**stats, "namespace": self.dataset_namespace, "config_id": self.match_config.config_id}
+
+    def graph_neighbors(self, node_id, hops=2, limit=100, relation=None):
+        from .knowledge_graph import neighbors
+        with self.lock:
+            return neighbors(self.db, node_id, hops, limit, self.match_config.max_posting, relation)
+
+    def explain(self, evaluation_id, model=None):
+        from .explanations import explain
+        with self.lock:
+            row = self.db.execute("SELECT payload_json FROM pair_evaluations WHERE evaluation_id=?", (evaluation_id,)).fetchone()
+            if not row:
+                raise ValidationError("Evaluation not found")
+            item = json.loads(row[0])
+            item["evaluation_id"] = evaluation_id
+        return explain(item, model)
 
     def export_audit(self):
         with self.lock:
@@ -331,22 +388,20 @@ class Engine:
     def export_labels(self):
         with self.lock:
             rows = self.db.execute("""SELECT e.evaluation_id,e.left_id,e.right_id,e.similarity_score,e.payload_json,
-              r.config_id,r.config_json,r.snapshot_id,d.human_label
+              r.config_id,r.config_json,r.statistics_json,r.snapshot_id,d.human_label
               FROM pair_evaluations e JOIN resolution_runs r ON r.run_id=e.run_id
               JOIN review_decisions d ON d.evaluation_id=e.evaluation_id
               WHERE d.rowid=(SELECT MAX(d2.rowid) FROM review_decisions d2 WHERE d2.evaluation_id=e.evaluation_id)
                 AND d.human_label IN ('Match','NonMatch')""")
-            from .pair_model import FEATURE_SCHEMA, feature_vector, fingerprint
+            from .feedback import sample
             exported = []
             for row in rows:
                 item = dict(row)
                 evaluation = json.loads(item.pop("payload_json"))
                 config = json.loads(item.pop("config_json"))
-                record_keys = [fingerprint({k: record.get(k, "") for k in
-                    ("supplier_id", "name", "country", "registration_id", "tax_id", "postcode", "address", "aliases")})
-                    for record in (evaluation["left_record"], evaluation["right_record"])]
-                item.update(feature_schema=FEATURE_SCHEMA, model_features=feature_vector(evaluation, config["max_feature_chars"]),
-                            record_keys=record_keys, pair_key=fingerprint(sorted(record_keys)), split=None, entity_group_ids=[],
+                namespace = json.loads(item.pop("statistics_json")).get("dataset_namespace", "local")
+                evaluation["evaluation_id"] = item["evaluation_id"]
+                item.update(sample(evaluation, config, item["config_id"], namespace), split=None, entity_group_ids=[],
                             instructions="Deduplicate pair_key across runs; assign connected groups for BOTH endpoints and disjoint train/validation/test splits. Reviewers' labels do not authorize actions.")
                 exported.append(json.dumps(item))
             return "\n".join(exported) + ("\n" if exported else "")
@@ -587,6 +642,12 @@ class Engine:
             parts += ["", "## Review candidates", ""]
             for row in state["review_candidates"]:
                 parts.append(f"- {safe(row['left_id'])} / {safe(row['right_id'])}: {safe(row['reason'])}")
+            from .explanations import explain
+            evaluations = self.evaluations(limit=20)
+            parts += ["", "## Recorded decision rationales", "",
+                      f"Showing {len(evaluations['evaluations'])} of {evaluations['total']} evaluations from the current run; use the audit export or explain command for the remainder.", ""]
+            for item in evaluations["evaluations"]:
+                parts.append(f"- {safe(item['evaluation_id'])}: {safe(explain(item)['text'])}")
             parts += ["", "## Import warnings", ""] + ["- " + safe(w) for w in state["warnings"]]
             parts += ["", "## Source evidence", ""]
             for row in self._records("suppliers") + self._records("invoices"):

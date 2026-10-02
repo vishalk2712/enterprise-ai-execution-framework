@@ -24,7 +24,7 @@ def run_dbt_contracts(suppliers_csv, spend_csv, workdir):
     database = workdir / "contracts.duckdb"
     with duckdb.connect(str(database)) as db:
         db.execute("CREATE SCHEMA raw")
-        for table, fields, rows in (("suppliers", (*SUPPLIER_FIELDS, "address", "aliases"), suppliers), ("spend", SPEND_FIELDS, spend)):
+        for table, fields, rows in (("suppliers", (*SUPPLIER_FIELDS, "address", "aliases", "lei", "parent_lei", "bank_account_hash"), suppliers), ("spend", SPEND_FIELDS, spend)):
             db.execute(f"CREATE TABLE raw.{table} (" + ",".join(f'"{f}" VARCHAR' for f in fields) + ")")
             db.executemany(f"INSERT INTO raw.{table} VALUES (" + ",".join("?" for _ in fields) + ")", [[r.get(f, "") for f in fields] for r in rows])
     profile = {"outcome_contracts": {"target": "local", "outputs": {"local": {"type": "duckdb", "path": str(database), "schema": "main", "threads": 1}}}}

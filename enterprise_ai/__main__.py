@@ -14,6 +14,7 @@ def main():
     parser.add_argument("--match-config", help="JSON MatchConfig overrides")
     parser.add_argument("--calibration", help="Reviewed supplier-domain calibration artifact; never enables auto-merges")
     parser.add_argument("--pair-model", help="Explicit supplier-domain pair classifier; routes human review only")
+    parser.add_argument("--dataset-namespace", default="local", help="Stable client/source namespace for review cohorts")
     sub = parser.add_subparsers(dest="command", required=True)
     demo = sub.add_parser("demo", help="Analyze synthetic data and export a report")
     demo.add_argument("--output", default=".outcome/demo-report.md")
@@ -52,6 +53,20 @@ def main():
     train.add_argument("--domain", required=True)
     train.add_argument("--output", required=True)
     train.add_argument("--target-precision", type=float, default=.95, help="Observed validation precision target; not a guarantee")
+    live = sub.add_parser("train", help="Fit a corporate model from persistent reviewer labels; does not activate weights")
+    live.add_argument("--from-reviews", action="store_true", required=True)
+    live.add_argument("--output", default=".outcome/supplier-pair-model.json")
+    live.add_argument("--split-manifest", default=".outcome/review-splits.json")
+    feedback = sub.add_parser("feedback-export", help="Export current deduplicated reviewer evidence")
+    feedback.add_argument("--output", default=".outcome/labeled_feedback.jsonl")
+    graph = sub.add_parser("graph", help="Bounded indexed relationship lookup")
+    graph.add_argument("node_id", help="For example supplier:SUP-001")
+    graph.add_argument("--hops", type=int, default=2)
+    graph.add_argument("--limit", type=int, default=100)
+    graph.add_argument("--relation")
+    explanation = sub.add_parser("explain", help="Render a two-sentence evidence rationale")
+    explanation.add_argument("evaluation_id")
+    explanation.add_argument("--ollama-model", help="Optional already installed model; fixed local endpoint")
     args = parser.parse_args()
     from .matching import MatchConfig
     try:
@@ -60,7 +75,7 @@ def main():
         parser.exit(2, f"Invalid matching configuration: {exc}\n")
     try:
         engine = Engine(args.db, config, json.loads(Path(args.calibration).read_text()) if args.calibration else None,
-                        json.loads(Path(args.pair_model).read_text()) if args.pair_model else None)
+                        json.loads(Path(args.pair_model).read_text()) if args.pair_model else None, dataset_namespace=args.dataset_namespace)
     except (ValueError, TypeError, OSError) as exc:
         parser.exit(2, f"Invalid engine configuration: {exc}\n")
     try:
@@ -79,7 +94,17 @@ def main():
             print(json.dumps(engine.review(args.evaluation_id, args.label, args.reviewer, args.reason, args.supersedes), indent=2))
         elif args.command == "pipeline":
             from .pipeline import run_pipeline
-            print(json.dumps(run_pipeline(args.suppliers, args.spend, args.output_dir, not args.without_dbt, config, engine.calibration, engine.pair_model), indent=2))
+            print(json.dumps(run_pipeline(args.suppliers, args.spend, args.output_dir, not args.without_dbt, config, engine.calibration, engine.pair_model, args.dataset_namespace), indent=2))
+        elif args.command == "train":
+            from .feedback import train_from_reviews
+            print(json.dumps(train_from_reviews(engine.db, config.config_id, args.dataset_namespace, args.output, args.split_manifest), indent=2))
+        elif args.command == "feedback-export":
+            from .feedback import export_feedback
+            print(json.dumps(export_feedback(engine.db, config.config_id, args.dataset_namespace, args.output), indent=2))
+        elif args.command == "graph":
+            print(json.dumps(engine.graph_neighbors(args.node_id, args.hops, args.limit, args.relation), indent=2))
+        elif args.command == "explain":
+            print(json.dumps(engine.explain(args.evaluation_id, args.ollama_model), indent=2))
         elif args.command == "train-pair-model":
             from .pair_model import fit_pair_model
             rows = [json.loads(line) for line in Path(args.labels).read_text(encoding="utf-8").splitlines() if line.strip()]

@@ -12,7 +12,7 @@ from .matching import jaccard, levenshtein_similarity
 from .normalization import ngrams
 
 VERSION = "pair-logistic-v1"
-FEATURE_SCHEMA = "pair-features-v1"
+FEATURE_SCHEMA = "pair-features-v2"
 FEATURE_NAMES = (
     "name_levenshtein", "name_token_jaccard", "name_trigram_dice",
     "name_sorted_levenshtein", "address_jaccard", "address_present",
@@ -65,6 +65,15 @@ def validate_artifact(artifact, config_id, domain):
     threshold = artifact.get("review_threshold")
     if not finite_number(threshold) or not 0 <= threshold <= 1:
         raise ValueError("Invalid pair model review threshold")
+    calibration = artifact.get("calibration")
+    if calibration is not None:
+        if (not isinstance(calibration, dict) or calibration.get("method") != "heldout-platt-v1"
+                or not finite_number(calibration.get("slope")) or calibration["slope"] < 0
+                or not finite_number(calibration.get("intercept")) or calibration.get("rows", 0) < 10
+                or artifact.get("probability_status") != "calibrated_pair_estimate"):
+            raise ValueError("Invalid held-out pair calibration")
+    elif artifact.get("probability_status") == "calibrated_pair_estimate":
+        raise ValueError("Calibrated status requires a separate calibration artifact")
     try:
         expected = fingerprint({k: v for k, v in artifact.items() if k != "model_id"})
     except (ValueError, TypeError) as exc:
@@ -76,11 +85,15 @@ def validate_artifact(artifact, config_id, domain):
 def predict(features, artifact):
     """Use an artifact already checked by validate_artifact at the boundary."""
     validate_features(features)
-    return sigmoid(artifact["intercept"] + sum(features[n] * w for n, w in zip(FEATURE_NAMES, artifact["weights"])))
+    logit = artifact["intercept"] + sum(features[n] * w for n, w in zip(FEATURE_NAMES, artifact["weights"]))
+    calibration = artifact.get("calibration")
+    if calibration:
+        logit = calibration["intercept"] + calibration["slope"] * max(-20, min(20, logit))
+    return sigmoid(logit)
 
 
-def partitions_for(rows, config_id):
-    partitions = {s: [] for s in ("train", "validation", "test")}
+def partitions_for(rows, config_id, calibrate=False):
+    partitions = {s: [] for s in (("train", "validation", "calibration", "test") if calibrate else ("train", "validation", "test"))}
     seen_evaluations, seen_pairs, group_split, record_split = set(), set(), {}, {}
     for row in rows:
         if not isinstance(row, dict):
@@ -154,12 +167,23 @@ def diagnostics(rows, probabilities, threshold):
             **classification(labels, probabilities, threshold)}
 
 
-def fit_pair_model(rows, config_id, domain, target_precision=.95):
+def reliability(rows, probabilities):
+    labels = [int(r["human_label"] == "Match") for r in rows]
+    bins = []
+    for index in range(10):
+        selected = [(p, y) for p, y in zip(probabilities, labels) if min(9, int(p * 10)) == index]
+        bins.append({"lower": index / 10, "upper": (index + 1) / 10, "rows": len(selected),
+                     "mean_probability": sum(p for p, _ in selected) / len(selected) if selected else None,
+                     "observed_match_fraction": sum(y for _, y in selected) / len(selected) if selected else None})
+    return bins
+
+
+def fit_pair_model(rows, config_id, domain, target_precision=.95, calibrate=False):
     if not isinstance(domain, str) or not domain.strip() or not isinstance(config_id, str) or not config_id:
         raise ValueError("Domain and exact matching config ID required")
     if not finite_number(target_precision) or not 0 < target_precision <= 1:
         raise ValueError("Target validation precision must be in (0,1]")
-    partitions = partitions_for(rows, config_id)
+    partitions = partitions_for(rows, config_id, calibrate)
     try:
         import numpy as np
     except ImportError as exc:
@@ -194,6 +218,27 @@ def fit_pair_model(rows, config_id, domain, target_precision=.95):
                 "validation": validation, "test": diagnostics(partitions["test"], test_predictions, threshold),
                 "labels_sha256": fingerprint(rows), "probability_status": "model_estimate",
                 "limitations": "Uncalibrated estimate for the labeled candidate distribution. Validation precision is observed, not guaranteed. Entity groups must be correct. No auto-merges or action authorization; person benchmarks do not establish supplier accuracy."}
+    if calibrate:
+        # Fixed monotone Platt fit on its own partition, after weight selection.
+        # Neither calibration parameters nor thresholds are selected on test.
+        subset = partitions["calibration"]
+        z = np.asarray([max(-20, min(20, scalar_model["intercept"] + sum(r["model_features"][n] * w for n, w in zip(FEATURE_NAMES, scalar_model["weights"])))) for r in subset])
+        cy = labels["calibration"]
+        slope, offset = 1.0, 0.0
+        for _ in range(3000):
+            errors = 1 / (1 + np.exp(-np.clip(offset + slope * z, -40, 40))) - cy
+            slope = max(0.0, slope - .01 * float((errors * z).mean()))
+            offset -= .01 * float(errors.mean())
+        artifact.update(calibration={"method": "heldout-platt-v1", "slope": slope, "intercept": offset,
+                                     "rows": len(subset), "labels_sha256": fingerprint(subset)},
+                        probability_status="calibrated_pair_estimate", review_threshold=.75,
+                        policy={"review_floor": .75, "auto_floor": .99, "requires_direct_identity": True},
+                        limitations="Calibrated on reviewer-selected candidate pairs, not the full supplier population. Selection bias and domain drift remain. A .99 estimate does not guarantee 99% precision. No model-only merges or action authorization. Repeated test evaluations are monitoring, not fresh promotion evidence.")
+        for split in ("validation", "calibration", "test"):
+            probabilities = [predict(r["model_features"], artifact) for r in partitions[split]]
+            artifact["calibration_evaluation" if split == "calibration" else split] = {**diagnostics(partitions[split], probabilities, .75),
+                               "at_auto_floor": diagnostics(partitions[split], probabilities, .99),
+                               "reliability_bins": reliability(partitions[split], probabilities)}
     artifact["model_id"] = fingerprint(artifact)
     validate_artifact(artifact, config_id, domain.strip())
     return artifact
@@ -205,7 +250,7 @@ def apply_model(evaluations, artifact, config):
         features = feature_vector(item, config.max_feature_chars)
         estimate = predict(features, artifact)
         item.update(model_features=features, feature_schema=FEATURE_SCHEMA, match_probability=estimate,
-                    probability_status="model_estimate", matching_model_id=artifact["model_id"],
+                    probability_status=artifact.get("probability_status", "model_estimate"), matching_model_id=artifact["model_id"],
                     heuristic_outcome=item["algorithmic_outcome"], model_review_threshold=artifact["review_threshold"])
         if item["algorithmic_outcome"] in {"Review_Candidate", "Below_Threshold"}:
             item["algorithmic_outcome"] = "Review_Candidate" if estimate >= artifact["review_threshold"] else "Below_Threshold"

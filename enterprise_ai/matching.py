@@ -11,7 +11,7 @@ from .normalization import VERSION, identifier, name_key, ngrams, soundex, token
 
 @dataclass(frozen=True)
 class MatchConfig:
-    version: str = "indexed-features-v2"
+    version: str = "indexed-governance-v4"
     normalization_version: str = VERSION
     ngram_size: int = 3
     min_shared_grams: int = 2
@@ -26,8 +26,11 @@ class MatchConfig:
     name_weight: float = .70
     address_weight: float = .20
     postcode_weight: float = .10
+    graph_blocking: bool = True
 
     def __post_init__(self):
+        if not isinstance(self.graph_blocking, bool):
+            raise ValueError("graph_blocking must be boolean")
         for field in ("ngram_size", "min_shared_grams", "max_posting", "max_candidates_per_record", "max_evaluations", "max_feature_chars", "excluded_tax_sample_size", "random_seed"):
             value = getattr(self, field)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
@@ -70,6 +73,7 @@ def jaccard(left, right):
 
 
 def score_pair(left, right, config):
+    from .governance import conflicts
     limit = config.max_feature_chars
     ln, rn = name_key(left["name"]), name_key(right["name"])
     features = {
@@ -79,7 +83,7 @@ def score_pair(left, right, config):
         "same_country": float(left.get("country") == right.get("country")),
         "shared_tax_id": float(bool(left.get("tax_id") and left.get("tax_id") == right.get("tax_id"))),
         "shared_registration_id": float(bool(left.get("registration_id") and left.get("registration_id") == right.get("registration_id"))),
-        "identifier_conflict": float(any(left.get(f) and right.get(f) and left[f] != right[f] for f in ("registration_id", "tax_id"))),
+        "identifier_conflict": float(any(reason != "country_disagreement" for reason in conflicts(left, right))),
     }
     weighted = [(features[k], w) for k, w in (("name_levenshtein", config.name_weight), ("address_jaccard", config.address_weight), ("postcode_exact", config.postcode_weight)) if features[k] is not None]
     score = sum(v*w for v, w in weighted) / sum(w for _, w in weighted)
@@ -109,6 +113,13 @@ def generate_candidates(records, config):
             code = soundex(variant)
             if code:
                 record_keys.add(("soundex", code))
+        if config.graph_blocking:
+            # Attribute nodes define the same two-hop supplier-key-supplier path
+            # exposed by KnowledgeGraph. Do not use parent or category as identity.
+            for field in ("registration_id", "tax_id", "lei", "postcode", "bank_account_hash"):
+                value = identifier(row.get(field, ""))
+                if value:
+                    record_keys.add(("graph_" + field, value if field == "lei" else row.get("country", "") + ":" + value))
         keys[rid] = record_keys
         for key in record_keys:
             postings[key].add(rid)
@@ -123,7 +134,7 @@ def generate_candidates(records, config):
                 hits[other] += 1
                 methods[other].add(key[0])
         ranked = [other for other in sorted(hits, key=lambda o: (-hits[o], o))
-                  if "soundex" in methods[other] or hits[other] >= config.min_shared_grams]
+                  if "soundex" in methods[other] or any(m.startswith("graph_") for m in methods[other]) or hits[other] >= config.min_shared_grams]
         capped_records += int(len(ranked) > config.max_candidates_per_record)
         for other in ranked[:config.max_candidates_per_record]:
             pair = tuple(sorted((rid, other)))

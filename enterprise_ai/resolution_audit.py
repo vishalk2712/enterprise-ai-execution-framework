@@ -78,6 +78,9 @@ def record_decision(db, evaluation_id, human_label, reviewer, reason, supersedes
 
 
 def export_history(db):
-    for table in ("resolution_runs", "pair_evaluations", "review_decisions"):
+    tables = ["resolution_runs", "pair_evaluations", "review_decisions"]
+    if db.execute("SELECT 1 FROM sqlite_master WHERE name='training_feedback' AND type='table'").fetchone():
+        tables.append("training_feedback")
+    for table in tables:
         for row in db.execute(f"SELECT * FROM {table} ORDER BY rowid"):
             yield json.dumps({"table": table, **dict(row)}, ensure_ascii=False)

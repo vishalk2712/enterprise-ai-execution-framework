@@ -2,11 +2,19 @@
 
 **Supplier intelligence with evidence and approved actions.**
 
-The first working module of an enterprise data-to-outcome framework. Import supplier and invoice CSVs, inspect proposed supplier groups, calculate exact spend by currency, and stage an approved update to a local mock procurement portal.
+The first working module of an enterprise data-to-outcome framework. Import supplier and invoice CSVs, inspect proposed supplier groups, calculate exact spend by currency, and stage an approved supplier sync to a local portal or a separate mock ERP through a headless browser.
 
-Built for a laptop with Python 3.10+. No GPU, API key, cloud account, or runtime package installation is required. This is a deterministic software prototype, with a baseline for evaluating future AI components; it does not contain a trained LLM.
+The core runs on a laptop with Python 3.10+ and no extra packages, GPU, API key or cloud account. Browser execution optionally adds Node.js and Playwright. Factual summaries optionally use an already installed local Ollama model. Resolution remains governed by deterministic rules and the explicitly configured classifier; no newly trained LLM is bundled.
 
-## New in v0.4
+## New in v0.5
+
+**Explain this group** now shows a two-sentence summary of legal identity evidence and measured similarities. An optional local model selects validated fact IDs; it cannot invent prose, change a match decision or authorize an action. Snapshot-bound summaries persist in the audit history with explicit fallback when Ollama is unavailable.
+
+`serve --browser-erp` starts a separate mock ERP and a durable headless browser queue. **Approve & run browser** binds approval to the exact payload, source evidence, dataset and ERP instance. The worker signs in, navigates indexed DOM controls and submits the approved form. Completion requires a reloaded receipt and actual destination verification; retries recover existing receipts without submitting again.
+
+Read the [v0.5 execution guide](docs/execution-v05.md) for setup, tests and failure semantics. This is an original bounded DOM adapter inspired by Jev's methodology, with no paid API dependency or general-purpose swarm claim. Real ERP authorization and distributed execution remain future work.
+
+## Corporate governance from v0.4
 
 Corporate identity governance now requires a consistent clique of shared registration IDs or LEIs. Shared VAT numbers, bank hashes and postcodes generate candidates but cannot establish identity. Parent/subsidiary links remain associations. The synthetic demo now produces **eight entities** with the same spend totals.
 
@@ -58,8 +66,8 @@ python -m enterprise_ai --db .outcome/experiment.sqlite serve --demo
 | Spend | Decimal arithmetic, credit values, exact-duplicate exclusion, totals and supplier rankings per currency |
 | Evidence | Source file and physical row references, dataset hashes, supplier/invoice relationships, bounded evidence excerpts |
 | Questions | Transparent rules for supported identity and spend questions; no external model calls |
-| Actions | Stage → approve → execute against SQLite mock portal; dataset-bound approvals and repeat-execution protection |
-| Interface | Local dashboard, graph preview, review candidates, action queue, portal view and downloadable report |
+| Actions | Default SQLite portal or opt-in separate mock ERP through a headless browser; exact approved intents, durable queue, expiring capabilities and verified receipts |
+| Interface | Local dashboard, group rationales, graph preview, persistent reviews, worker status, destination receipts and downloadable audit/report |
 
 The distinguishing product hypothesis is the complete chain from **source row → identity decision → spend result → reviewed change → verified destination**. It needs customer testing; it is not a claim of proven market advantage.
 
@@ -110,11 +118,18 @@ flowchart LR
     E --> UI[Local workbench]
     UI --> P[Stage proposed sync]
     P --> A[Human approval]
-    A --> M[Local mock portal]
+    A --> M[Default local portal]
+    A --> Q[Optional durable browser queue]
+    Q --> ERP[Separate mock ERP HTML form]
+    ERP --> RC[Reload and verify receipt]
+    E --> RA[Optional local fact-plan rationale]
+    RA --> UI
 ```
 
 - `enterprise_ai/engine.py`: validation, identity rules, query routing, evidence and action lifecycle.
 - `enterprise_ai/server.py`: loopback HTTP API and static application serving.
+- `enterprise_ai/explanations.py`: factual summaries and optional local model fact plans.
+- `enterprise_ai/execution.py`, `browser_worker.mjs`, `mock_erp.py`: durable jobs, bounded DOM execution and a separate destination sandbox.
 - `enterprise_ai/static/`: accessible vanilla HTML, CSS and JavaScript; no CDN dependencies.
 - `examples/`: inspectable synthetic data; packaged copies live under `enterprise_ai/data/`.
 - `tests/`: acceptance, regression and HTTP checks using independently authored fixtures.
@@ -123,7 +138,7 @@ Data and action state persist in `.outcome/engine.sqlite` by default. Imports re
 
 ## Boundaries and next steps
 
-This server binds to `127.0.0.1`. It has no user accounts, tenant isolation or production deployment support. Keep it local. Dashboard queries and rationales use deterministic code. The optional CLI Ollama adapter sends only numerical/operational facts to an already installed local model and validates fact IDs before rendering. The engine does not run uploaded code, control a browser or update a real ERP. The mock approval flow demonstrates workflow state, not organizational access control.
+This server binds to `127.0.0.1`. It has no production user accounts, tenant isolation or deployment support. Queries remain deterministic; optional Ollama summaries send only bounded evidence facts to a local model and validate its selected fact IDs before rendering. The optional browser worker only controls the separate loopback mock ERP in a fresh profile. The mock login and approval demonstrate workflow state, not organizational access control or real financial transactions.
 
 The commercial starting point is a **reviewed supplier-cleanup and spend handover** for procurement teams. First measure false merges, unresolved cases, analyst review time and report usefulness with consenting pilot users. Keep sensitive customer data out of the public repository; `local-data/`, `.outcome/`, secrets and databases are ignored.
 
@@ -135,6 +150,6 @@ Supplier models must earn their place on independent, permissioned corporate exa
 
 ## Attribution
 
-The default implementation is original code using Python's standard library and browser platform APIs. The optional data-contract environment uses dbt Core, dbt-duckdb and DuckDB under their respective licenses. Classifier training uses NumPy; optional Parquet export uses Apache Arrow. The experimental SPIDER model's attribution and limits are in its [model card](models/README.md), and the corporate benchmark's GLEIF attribution is in the [v0.4 guide](docs/governance-v04.md). No code, model weights, skills or raw datasets from MiniMind, MiroFish, Graphify, OpenViking, Roo Code or Jev are bundled. Those projects retain their own licenses.
+The default implementation is original code using Python's standard library and browser platform APIs. The optional browser adapter uses Playwright; Ollama and any installed model retain their respective licenses. The optional data-contract environment uses dbt Core, dbt-duckdb and DuckDB under their respective licenses. Classifier training uses NumPy; optional Parquet export uses Apache Arrow. The experimental SPIDER model's attribution and limits are in its [model card](models/README.md), and the corporate benchmark's GLEIF attribution is in the [v0.4 guide](docs/governance-v04.md). No code, model weights, skills or raw datasets from MiniMind, MiroFish, Graphify, OpenViking, Roo Code or Jev are bundled. Those projects retain their own licenses.
 
 Released under the [MIT License](LICENSE).

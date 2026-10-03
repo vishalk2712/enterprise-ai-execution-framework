@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "enterprise-ai-execution-framework"
-version = "0.4.0"
+version = "0.5.0"
 description = "Evidence-backed supplier resolution, spend analytics and a local action sandbox"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -17,4 +17,4 @@ outcome-engine = "enterprise_ai.__main__:main"
 include = ["enterprise_ai*"]
 
 [tool.setuptools.package-data]
-enterprise_ai = ["static/*.html", "static/*.css", "static/*.js", "data/*.csv", "dbt/*.yml", "dbt/models/*.yml", "dbt/models/*.sql", "dbt/tests/*.sql"]
+enterprise_ai = ["*.mjs", "static/*.html", "static/*.css", "static/*.js", "data/*.csv", "dbt/*.yml", "dbt/models/*.yml", "dbt/models/*.sql", "dbt/tests/*.sql"]

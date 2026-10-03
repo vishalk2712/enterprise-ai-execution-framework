@@ -104,10 +104,15 @@ def evidence(row: dict) -> dict:
 
 
 class Engine:
-    def __init__(self, db_path: str = ":memory:", match_config: MatchConfig | None = None, calibration=None, pair_model=None, dataset_namespace="local"):
+    def __init__(self, db_path: str = ":memory:", match_config: MatchConfig | None = None, calibration=None, pair_model=None, dataset_namespace="local", tenant_id='local', bank_link_key=None):
         if not isinstance(dataset_namespace, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", dataset_namespace):
             raise ValueError("dataset_namespace must be 1..80 letters, digits, underscores or hyphens")
         self.dataset_namespace = dataset_namespace
+        from .security import validate_tenant
+        self.tenant_id = validate_tenant(tenant_id)
+        if bank_link_key is not None and (not isinstance(bank_link_key,bytes) or len(bank_link_key)<32):
+            raise ValueError('Bank linkage key must contain at least 32 bytes')
+        self.bank_link_key = bank_link_key
         self.browser_erp = None
         self.coordinator = None
         self.match_config = match_config or MatchConfig()
@@ -141,6 +146,20 @@ class Engine:
             CREATE TABLE IF NOT EXISTS audit (
                 sequence INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL, event TEXT NOT NULL, payload TEXT NOT NULL);
         """)
+        stored_tenant = self._meta('tenant_id')
+        if stored_tenant is not None and stored_tenant!=self.tenant_id:
+            self.db.close()
+            raise ValueError('Engine database belongs to another tenant')
+        key_id = hashlib.sha256(bank_link_key).hexdigest() if bank_link_key else 'unkeyed'
+        stored_key = self._meta('bank_link_key_id')
+        if stored_key is not None and stored_key!=key_id:
+            self.db.close()
+            raise ValueError('Bank linkage key changed; use a separate migration database')
+        if stored_key is None and bank_link_key and self.db.execute('SELECT 1 FROM suppliers LIMIT 1').fetchone():
+            self.db.close()
+            raise ValueError('Bank protection requires a fresh database; existing evidence must be migrated explicitly')
+        self.db.execute("INSERT OR IGNORE INTO metadata VALUES('tenant_id',?)", (json.dumps(self.tenant_id),))
+        self.db.execute("INSERT OR IGNORE INTO metadata VALUES('bank_link_key_id',?)", (json.dumps(key_id),))
         resolution_audit.migrate(self.db)
         from . import feedback, knowledge_graph
         feedback.migrate(self.db)
@@ -205,6 +224,13 @@ class Engine:
                 raise ValidationError("A legal entity cannot be its own parent")
             if row["bank_account_hash"] and not re.fullmatch(r"[0-9a-f]{64}", row["bank_account_hash"]):
                 raise ValidationError(f"suppliers.csv:{row['_line']}: bank_account_hash must be a SHA-256 hexadecimal hash; do not upload account numbers.")
+            if self.bank_link_key and row['bank_account_hash']:
+                import hmac
+                original = row['bank_account_hash']
+                row['bank_account_hash'] = hmac.new(self.bank_link_key,(self.tenant_id+':'+original).encode(),hashlib.sha256).hexdigest()
+                # read_csv's evidence excerpt may contain optional input columns.
+                if 'bank_account_hash' in row.get('_original',{}):
+                    row['_original']['bank_account_hash'] = row['bank_account_hash']
         unique = {}
         for row in invoices:
             if not row["invoice_id"] or row["supplier_id"] not in ids:
@@ -264,7 +290,7 @@ class Engine:
         snapshot = digest(snapshot_id + self.match_config.canonical() + json.dumps(contract_manifest, sort_keys=True) + json.dumps(self.calibration, sort_keys=True))
         if self.pair_model is not None:
             snapshot = digest(snapshot + json.dumps(self.pair_model, sort_keys=True))
-        snapshot = digest(snapshot + self.dataset_namespace + POLICY_VERSION)
+        snapshot = digest(snapshot + self.dataset_namespace + POLICY_VERSION + self.tenant_id + self._meta('bank_link_key_id'))
         meta = {"supplier_count": len(suppliers), "invoice_count": len(invoices),
                 "entity_count": len(entities), "currencies": sorted({r["currency"] for r in invoices}),
                 "snapshot": snapshot, "source_hashes": {"suppliers.csv": digest(suppliers_csv), "spend.csv": digest(spend_csv)},
@@ -418,7 +444,7 @@ class Engine:
     def export_audit(self):
         with self.lock:
             lines = list(resolution_audit.export_history(self.db))
-            for table in ('actions', 'execution_jobs', 'dispatch_outbox', 'entity_rationales', 'audit'):
+            for table in ('actions', 'execution_jobs', 'dispatch_outbox', 'execution_dead_letters', 'execution_tombstones', 'maintenance_archives', 'entity_rationales', 'audit'):
                 for row in self.db.execute(f'SELECT * FROM {table} ORDER BY rowid'):
                     lines.append(json.dumps({'table': table, **dict(row)}, ensure_ascii=False))
             return '\n'.join(lines) + '\n'
@@ -620,7 +646,7 @@ class Engine:
                 and actual.get("action_id") == action["action_id"]
                 and entity == action["payload"])
 
-    def stage_action(self, entity_id: str) -> dict:
+    def stage_action(self, entity_id: str, actor='local_operator') -> dict:
         with self.lock, self.db:
             row = self.db.execute("SELECT payload FROM entities WHERE entity_id=?", (entity_id,)).fetchone()
             if not row:
@@ -640,7 +666,7 @@ class Engine:
                     return old
                 break
             action_id = "action-" + uuid4().hex[:20]
-            payload = {"entity_id": entity_id, "operation": "sync_supplier", "target": "local_mock_portal", "created_at": now(),
+            payload = {"entity_id": entity_id, "operation": "sync_supplier", "target": "local_mock_portal", "created_at": now(), 'created_by':actor,
                        "payload": entity,
                        "evidence": [evidence(json.loads(r[0])) for r in self.db.execute("SELECT payload FROM suppliers WHERE entity_id=?", (entity_id,))]}
             if self.browser_erp:
@@ -650,16 +676,18 @@ class Engine:
             self._log("action_staged", {"action_id": action_id, "target": payload['target']})
             return self._action(action_id)
 
-    def approve_action(self, action_id: str) -> dict:
+    def approve_action(self, action_id: str, actor='local_operator', separate_duties=False) -> dict:
         with self.lock, self.db:
             action = self._action(action_id)
             if action["snapshot"] != self._meta("dataset", {}).get("snapshot") or action["status"] == "stale":
                 raise ValidationError("Stale action; stage a new action from the current dataset.")
             if action["status"] == "pending":
+                if separate_duties and (not action.get('created_by') or action['created_by']=='local_operator' or action['created_by']==actor):
+                    raise ValidationError('A signed-in action author and a different approver are required')
                 if action.get('target') in {'browser_mock_erp', 'api_mock_erp'} and (self.browser_erp is None or action.get('target_binding') != self.browser_erp.binding()):
                     raise ValidationError('ERP target changed; stage a fresh action before approval')
                 self.db.execute("UPDATE actions SET status='approved' WHERE action_id=?", (action_id,))
-                self._log("action_approved", {"action_id": action_id, "actor": "local_operator"})
+                self._log("action_approved", {"action_id": action_id, "actor": actor, 'tenant_id':self.tenant_id})
                 if action.get('target') in {'browser_mock_erp', 'api_mock_erp'}:
                     from .execution import enqueue
                     enqueue(self, self._action(action_id))

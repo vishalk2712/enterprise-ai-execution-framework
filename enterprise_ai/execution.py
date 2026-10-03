@@ -46,7 +46,9 @@ def enqueue(engine, action):
 def job_state(engine, action_id):
     row = engine.db.execute("SELECT * FROM execution_jobs WHERE action_id=?", (action_id,)).fetchone()
     if not row:
-        return None
+        archived = engine.db.execute('SELECT * FROM execution_tombstones WHERE action_id=?',(action_id,)).fetchone()
+        return {'state':'verified','attempts':archived['attempts'],'error':None,'intent_hash':archived['intent_hash'],
+                'receipt':None,'archive_id':archived['archive_id']} if archived else None
     data = {k: row[k] for k in ('state', 'attempts', 'error', 'intent_hash')}
     data['receipt'] = json.loads(row['receipt_json']) if row['receipt_json'] else None
     return data
@@ -97,11 +99,17 @@ def run_one(engine, browser=run_browser):
     with engine.lock:
         engine.db.execute('BEGIN IMMEDIATE')
         try:
-            row = engine.db.execute("SELECT action_id FROM execution_jobs WHERE state='queued' OR (state='running' AND lease_until<?) ORDER BY rowid LIMIT 1", (time.time(),)).fetchone()
+            # The engine lock excludes a live in-process run. Any running row
+            # left when this lock is acquired is from an interrupted process.
+            row = engine.db.execute("SELECT * FROM execution_jobs WHERE state IN ('queued','running') ORDER BY rowid LIMIT 1").fetchone()
             if not row:
                 engine.db.commit()
                 return None
-            action_id = row[0]
+            action_id = row['action_id']
+            if row['attempts']>=3:
+                quarantine(engine,row)
+                engine.db.commit()
+                return {'action_id':action_id,'state':'ERRORED_REQUIRES_INVESTIGATION'}
             engine.db.execute("UPDATE execution_jobs SET state='running',attempts=attempts+1,owner=?,lease_until=?,error=NULL WHERE action_id=?", (owner, time.time()+90, action_id))
             engine.db.commit()
             engine.db.execute('BEGIN IMMEDIATE')
@@ -120,7 +128,7 @@ def run_one(engine, browser=run_browser):
                 raise ValueError('Completion has no matching destination receipt')
             with engine.browser_erp.lock:
                 engine.browser_erp.verify(receipt)
-            engine.db.execute("UPDATE execution_jobs SET state='verified',receipt_json=?,lease_until=0 WHERE action_id=?", (canonical(receipt), action_id))
+            engine.db.execute("UPDATE execution_jobs SET state='verified',receipt_json=?,lease_until=0,completed_at=? WHERE action_id=?", (canonical(receipt), time.time(), action_id))
             engine.db.execute("UPDATE actions SET status='executed' WHERE action_id=?", (action_id,))
             engine._log('browser_erp_verified', {'action_id': action_id, 'receipt': receipt, 'dom_trace': result.get('trace', []), 'recovered': result.get('recovered', False)})
             engine.db.commit()
@@ -132,7 +140,9 @@ def run_one(engine, browser=run_browser):
             with engine.db:
                 engine.db.execute("UPDATE execution_jobs SET state='failed',lease_until=0,error=? WHERE action_id=? AND owner=?", ('Completion not verified; ERP may have applied it. Retry checks its receipt, or restage changed evidence.', action_id, owner))
                 engine._log('browser_erp_failed', {'action_id': action_id, 'completion_verified': False})
-            return {'action_id': action_id, 'state': 'failed'}
+                row = engine.db.execute('SELECT * FROM execution_jobs WHERE action_id=?',(action_id,)).fetchone()
+                if row and row['attempts']>=3: quarantine(engine,row)
+            return {'action_id': action_id, 'state': 'ERRORED_REQUIRES_INVESTIGATION' if row and row['attempts']>=3 else 'failed'}
         except BaseException:
             engine.db.rollback()
             raise
@@ -144,11 +154,20 @@ def retry(engine, action):
     if engine.browser_erp is None or action.get('target_binding') != engine.browser_erp.binding():
         raise ValueError('ERP target changed; fresh approval required')
     enqueue(engine, action)
+    row = engine.db.execute('SELECT state FROM execution_jobs WHERE action_id=?', (action['action_id'],)).fetchone()
+    if row['state']=='ERRORED_REQUIRES_INVESTIGATION': raise ValueError('Attempt budget exhausted; investigation required')
     if engine.coordinator:
         from .distributed import queue
-        row = engine.db.execute('SELECT state FROM execution_jobs WHERE action_id=?', (action['action_id'],)).fetchone()
         if row['state'] == 'failed': queue(engine, action['action_id'], retry=True)
     engine.db.execute("UPDATE execution_jobs SET state='queued',error=NULL WHERE action_id=? AND state='failed'", (action['action_id'],))
+
+
+def quarantine(engine,row):
+    """Legacy local worker shares the three-attempt investigation fence."""
+    engine.db.execute("UPDATE execution_jobs SET state='ERRORED_REQUIRES_INVESTIGATION',lease_until=0,error='Attempt budget exhausted; investigate destination before replay.' WHERE action_id=?",(row['action_id'],))
+    engine.db.execute('INSERT OR IGNORE INTO execution_dead_letters(action_id,intent_hash,epoch,attempts,reason_code,created_at) VALUES(?,?,1,?,?,?)',
+                      (row['action_id'],row['intent_hash'],row['attempts'],'ATTEMPT_BUDGET_EXHAUSTED',time.time()))
+    engine._log('ERRORED_REQUIRES_INVESTIGATION',{'action_id':row['action_id'],'attempts':row['attempts']})
 
 
 class BrowserWorker:

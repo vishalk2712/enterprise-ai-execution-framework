@@ -33,6 +33,7 @@ def consume_one(client, broker=None, consumer='worker-1'):
     grant = client.request('claim', {'reference': message[1] if message else None})
     state = grant['state']
     if state != 'granted':
+        if message and state=='ERRORED_REQUIRES_INVESTIGATION': broker.dead_letter(grant['reference'],message[0])
         if message and state in {'terminal', 'obsolete'}: broker.ack(message[0])
         return {'state': state}
     report = {'action_id': grant['action']['action_id'], 'lease': grant['lease']}
@@ -52,14 +53,16 @@ def consume_one(client, broker=None, consumer='worker-1'):
         response = client.request('complete', {**report, 'receipt': result['receipt']})
     if message and response['state'] in {'verified', 'failed'}:
         broker.ack(message[0])
+    if message and response['state']=='ERRORED_REQUIRES_INVESTIGATION': broker.dead_letter(response['reference'],message[0])
     return {'action_id': report['action_id'], 'state': response['state']}
 
 
-def run_worker(origin, token_file, redis_url=None, consumer='worker-1', once=False):
-    token = Path(token_file).read_text(encoding='utf-8').strip()
+def run_worker(origin, token_file, redis_url=None, consumer='worker-1', once=False, token=None, tenant='local'):
+    token = token if token is not None else Path(token_file).read_text(encoding='utf-8').strip()
     if len(token) < 32: raise ValueError('Invalid worker token file')
     client = WorkerClient(origin, token)
     identity = client.request('identity')
+    if identity.get('tenant_id')!=tenant: raise ValueError('Coordinator belongs to another tenant')
     broker = None
     if identity['delivery'] == 'redis_streams':
         if not redis_url: raise ValueError('This coordinator requires the Redis URL environment variable')

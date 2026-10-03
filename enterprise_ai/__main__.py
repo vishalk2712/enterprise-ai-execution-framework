@@ -16,6 +16,9 @@ def main():
     parser.add_argument("--calibration", help="Reviewed supplier-domain calibration artifact; never enables auto-merges")
     parser.add_argument("--pair-model", help="Explicit supplier-domain pair classifier; routes human review only")
     parser.add_argument("--dataset-namespace", default="local", help="Stable client/source namespace for review cohorts")
+    parser.add_argument('--tenant-id', default='local', help='One tenant per database, ERP instance and server process')
+    parser.add_argument('--vault-config', help='Non-secret JSON vault connection settings')
+    parser.add_argument('--bank-key-ref', help='Vault reference containing a 64-character hex bank-linkage HMAC key; new database only')
     sub = parser.add_subparsers(dest="command", required=True)
     demo = sub.add_parser("demo", help="Analyze synthetic data and export a report")
     demo.add_argument("--output", default=".outcome/demo-report.md")
@@ -38,12 +41,25 @@ def main():
     serve.add_argument('--distributed', action='store_true', help='Detach browser workers; optional Redis Streams broker')
     serve.add_argument('--worker-token-file', default='.outcome/worker.token', help='Local bootstrap credential for detached workers')
     serve.add_argument('--redis-url-env', default='OUTCOME_REDIS_URL', help='Environment variable containing redis/rediss URL; never put credentials in CLI arguments')
+    serve.add_argument('--auth-config', help='Tenant identity JSON with password hashes; enables dashboard RBAC')
+    serve.add_argument('--worker-token-ref', help='Read detached worker credential from configured vault; no file fallback')
+    serve.add_argument('--erp-password-ref', help='Read mock ERP credential from configured vault')
+    serve.add_argument('--max-attempts', type=int, default=3)
+    serve.add_argument('--archive-dir', default='.outcome/archives')
+    serve.add_argument('--retention-days', type=int, default=90)
     worker_cmd = sub.add_parser('worker', help='Run an independent API/DOM consumer; no access to engine SQLite')
     worker_cmd.add_argument('--coordinator', required=True)
     worker_cmd.add_argument('--token-file', default='.outcome/worker.token')
+    worker_cmd.add_argument('--token-ref', help='Read worker credential from configured vault; no file fallback')
     worker_cmd.add_argument('--redis-url-env', default='OUTCOME_REDIS_URL')
     worker_cmd.add_argument('--consumer', default='worker-1')
     worker_cmd.add_argument('--once', action='store_true')
+    identities = sub.add_parser('auth-init', help='Create tenant identities and private initial passwords without overwriting files')
+    identities.add_argument('--output', default='.outcome/auth.json')
+    maintenance = sub.add_parser('maintenance', help='Archive verified operational rows; retain approval and destination evidence')
+    maintenance.add_argument('--archive-dir', default='.outcome/archives')
+    maintenance.add_argument('--retention-days', type=int, default=90)
+    maintenance.add_argument('--vacuum', action='store_true', help='Reclaim SQLite file space; stop the server and workers before running')
     audit = sub.add_parser("audit-export", help="Export immutable evaluations and separate review labels")
     audit.add_argument("--output", required=True)
     labels = sub.add_parser("labels-export", help="Export latest definite labels for explicit grouping and split assignment")
@@ -83,9 +99,26 @@ def main():
     explanation.add_argument("evaluation_id")
     explanation.add_argument("--ollama-model", help="Optional already installed model; fixed local endpoint")
     args = parser.parse_args()
+    try:
+        from .security import validate_tenant
+        validate_tenant(args.tenant_id)
+        from .secret_store import load_store
+        store = load_store(args.vault_config) if args.vault_config else None
+        def secret(reference):
+            if not store: raise ValueError('Secret references require --vault-config')
+            return store.get(reference)
+        bank_key = bytes.fromhex(secret(args.bank_key_ref)) if args.bank_key_ref else None
+        if bank_key is not None and len(bank_key)!=32: raise ValueError('Bank-linkage key must contain 32 bytes')
+        if args.command=='auth-init':
+            from .security import bootstrap
+            print(json.dumps(bootstrap(args.output,args.tenant_id),indent=2))
+            return
+    except (ValueError, TypeError, OSError):
+        parser.exit(2,'Invalid tenant or vault configuration; secret values are never printed.\n')
     if args.command == 'worker':
         from .worker import run_worker
-        try: run_worker(args.coordinator, args.token_file, os.environ.get(args.redis_url_env), args.consumer, args.once)
+        try: run_worker(args.coordinator, args.token_file, os.environ.get(args.redis_url_env), args.consumer, args.once,
+                        token=secret(args.token_ref) if args.token_ref else None, tenant=args.tenant_id)
         except KeyboardInterrupt: pass
         except (ValueError, OSError): parser.exit(2, 'Worker could not connect or verify completion; inspect configuration.\n')
         return
@@ -96,7 +129,8 @@ def main():
         parser.exit(2, f"Invalid matching configuration: {exc}\n")
     try:
         engine = Engine(args.db, config, json.loads(Path(args.calibration).read_text()) if args.calibration else None,
-                        json.loads(Path(args.pair_model).read_text()) if args.pair_model else None, dataset_namespace=args.dataset_namespace)
+                        json.loads(Path(args.pair_model).read_text()) if args.pair_model else None, dataset_namespace=args.dataset_namespace,
+                        tenant_id=args.tenant_id, bank_link_key=bank_key)
     except (ValueError, TypeError, OSError) as exc:
         parser.exit(2, f"Invalid engine configuration: {exc}\n")
     try:
@@ -107,6 +141,13 @@ def main():
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_text(engine.export_report(), encoding="utf-8")
             print(json.dumps({"dataset": state["dataset"], "totals": state["totals"], "warnings": state["warnings"], "report": str(output)}, indent=2))
+        elif args.command=='maintenance':
+            from .maintenance import compact
+            result = compact(engine,args.archive_dir,args.retention_days)
+            if args.vacuum:
+                engine.db.execute('VACUUM')
+                result['vacuumed'] = True
+            print(json.dumps(result,indent=2))
         elif args.command == "audit-export":
             Path(args.output).write_text(engine.export_audit(), encoding="utf-8")
         elif args.command == "labels-export":
@@ -115,7 +156,7 @@ def main():
             print(json.dumps(engine.review(args.evaluation_id, args.label, args.reviewer, args.reason, args.supersedes), indent=2))
         elif args.command == "pipeline":
             from .pipeline import run_pipeline
-            print(json.dumps(run_pipeline(args.suppliers, args.spend, args.output_dir, not args.without_dbt, config, engine.calibration, engine.pair_model, args.dataset_namespace), indent=2))
+            print(json.dumps(run_pipeline(args.suppliers, args.spend, args.output_dir, not args.without_dbt, config, engine.calibration, engine.pair_model, args.dataset_namespace,args.tenant_id,bank_key), indent=2))
         elif args.command == "train":
             from .feedback import train_from_reviews
             print(json.dumps(train_from_reviews(engine.db, config.config_id, args.dataset_namespace, args.output, args.split_manifest), indent=2))
@@ -143,6 +184,12 @@ def main():
                 raise ValueError('Choose API or browser ERP mode, not both')
             if args.distributed and not (args.api_erp or args.browser_erp):
                 raise ValueError('Detached workers require an ERP adapter')
+            if args.auth_config and args.browser_erp and not args.distributed:
+                raise ValueError('Protected browser execution requires --distributed')
+            security = None
+            if args.auth_config:
+                from .security import AccessControl
+                security = AccessControl(json.loads(Path(args.auth_config).read_text()),args.tenant_id)
             if args.demo:
                 if args.require_dbt:
                     from .contracts import run_dbt_contracts
@@ -161,25 +208,30 @@ def main():
                 erp_path = Path(args.erp_db) if args.erp_db else Path(args.db).with_name(Path(args.db).stem+'-mock-erp.sqlite')
                 if erp_path.resolve() == Path(args.db).resolve():
                     raise ValueError('The mock ERP must use a separate database')
-                engine.browser_erp = MockERP(erp_path, records, api_enabled=args.api_erp)
+                engine.browser_erp = MockERP(erp_path, records, api_enabled=args.api_erp, tenant_id=args.tenant_id,
+                                            password=secret(args.erp_password_ref) if args.erp_password_ref else None)
                 erp_server = make_erp_server(engine.browser_erp, args.erp_port)
                 if args.api_erp or args.distributed:
                     import secrets
                     from .distributed import Coordinator
-                    token_path = Path(args.worker_token_file)
-                    token_path.parent.mkdir(parents=True, exist_ok=True)
-                    if not token_path.exists():
-                        descriptor = os.open(token_path, os.O_WRONLY|os.O_CREAT|os.O_EXCL, 0o600)
-                        with os.fdopen(descriptor, 'w') as handle: handle.write(secrets.token_urlsafe(32))
+                    if args.worker_token_ref:
+                        worker_token = secret(args.worker_token_ref)
+                    else:
+                        token_path = Path(args.worker_token_file)
+                        token_path.parent.mkdir(parents=True, exist_ok=True)
+                        if not token_path.exists():
+                            descriptor = os.open(token_path, os.O_WRONLY|os.O_CREAT|os.O_EXCL, 0o600)
+                            with os.fdopen(descriptor, 'w') as handle: handle.write(secrets.token_urlsafe(32))
+                        worker_token = token_path.read_text().strip()
                     broker = None
                     if os.environ.get(args.redis_url_env):
                         from .broker import RedisBroker
                         broker = RedisBroker(os.environ[args.redis_url_env], engine._meta('coordinator_id'))
-                    Coordinator(engine, token_path.read_text().strip(), broker)
+                    Coordinator(engine, worker_token, broker, args.max_attempts, args.archive_dir, args.retention_days)
                 else:
                     worker = BrowserWorker(engine)
             try:
-                server = make_server(engine, args.port, ".outcome/contracts" if args.require_dbt else None, args.rationale_model)
+                server = make_server(engine, args.port, ".outcome/contracts" if args.require_dbt else None, args.rationale_model, security)
             except OSError:
                 if erp_server:
                     erp_server.server_close()
@@ -189,6 +241,7 @@ def main():
                 threading.Thread(target=erp_server.serve_forever, daemon=True).start()
             print(f"Outcome Engine: http://127.0.0.1:{server.server_port}", flush=True)
             print("Local demo only. Ctrl+C to stop. Data stays in your configured SQLite file.", flush=True)
+            print('Tenant: '+args.tenant_id+'; dashboard '+('RBAC enabled.' if security else 'unsecured loopback demo.'),flush=True)
             if engine.browser_erp:
                 print(f'Mock ERP: {engine.browser_erp.origin} (separate sandbox database). Approval queues the configured worker.', flush=True)
                 if engine.coordinator: print('Detached execution enabled. Start python -m enterprise_ai worker with this coordinator URL and worker token file.', flush=True)

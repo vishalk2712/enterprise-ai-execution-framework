@@ -17,6 +17,8 @@ class RedisBroker:
         self.url = parsed
         self.stream = 'outcome:' + namespace
         self.group = 'execution-v1'
+        self.dlq = 'outcome:dlq:'+namespace
+        self.dlq_index = 'outcome:dlq-index:'+namespace
         self.cursor = '0-0'
 
     def command(self, *parts):
@@ -81,4 +83,13 @@ class RedisBroker:
         return message_id, dict(zip(fields[::2], fields[1::2]))
 
     def ack(self, message_id):
-        return self.command('XACK', self.stream, self.group, message_id)
+        # Dedicated stream with one configured consumer group. Never trim pending jobs.
+        return self.command('EVAL', "local n=redis.call('XACK',KEYS[1],ARGV[1],ARGV[2]); if n==1 then redis.call('XDEL',KEYS[1],ARGV[2]); end; return n", 1, self.stream, self.group, message_id)
+
+    def dead_letter(self, reference, message_id=''):
+        if set(reference)!={'action_id','intent_hash','epoch','attempts','reason_code'}: raise ValueError('Invalid dead-letter reference')
+        script = """local key=ARGV[1]..':'..ARGV[3]; local id=redis.call('HGET',KEYS[3],key);
+        if not id then id=redis.call('XADD',KEYS[2],'*','action_id',ARGV[1],'intent_hash',ARGV[2],'epoch',ARGV[3],'attempts',ARGV[4],'reason_code',ARGV[5]); redis.call('HSET',KEYS[3],key,id); end;
+        if ARGV[7]~='' then redis.call('XACK',KEYS[1],ARGV[6],ARGV[7]); redis.call('XDEL',KEYS[1],ARGV[7]); end; return id"""
+        return self.command('EVAL',script,3,self.stream,self.dlq,self.dlq_index,
+                            *(reference[k] for k in ('action_id','intent_hash','epoch','attempts','reason_code')),self.group,message_id)

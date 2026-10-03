@@ -16,7 +16,16 @@ def demo_csv():
             (root / "spend.csv").read_text(encoding="utf-8"))
 
 
-def make_server(engine: Engine, port: int = 8765, contract_workdir=None, rationale_model=None):
+def make_server(engine: Engine, port: int = 8765, contract_workdir=None, rationale_model=None, security=None):
+    if security and security.tenant!=engine.tenant_id: raise ValueError('Dashboard identities belong to another tenant')
+    with engine.lock,engine.db:
+        access_mode=engine._meta('dashboard_access_mode')
+        if not security and access_mode=='rbac': raise ValueError('This database requires its tenant identity configuration')
+        if security and access_mode!='rbac':
+            # A pre-RBAC approval cannot acquire authority during migration.
+            count=engine.db.execute("UPDATE actions SET status='stale' WHERE status IN ('pending','approved')").rowcount
+            engine._log('rbac_enabled_legacy_approvals_revoked',{'actions':count,'tenant_id':engine.tenant_id})
+        engine.db.execute("INSERT OR REPLACE INTO metadata VALUES('dashboard_access_mode',?)",(json.dumps('rbac' if security else 'unsecured'),))
     def import_dataset(suppliers, spend):
         if contract_workdir:
             from .contracts import run_dbt_contracts
@@ -24,12 +33,12 @@ def make_server(engine: Engine, port: int = 8765, contract_workdir=None, rationa
             return engine.analyze(suppliers, spend, normalized, contract)
         return engine.analyze(suppliers, spend)
     class Handler(BaseHTTPRequestHandler):
-        server_version = "OutcomeEngine/0.6"
+        server_version = "OutcomeEngine/0.7"
 
         def _host_ok(self):
             return self.headers.get("Host") in {f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}
 
-        def respond(self, status, data, content_type="application/json; charset=utf-8", download=False):
+        def respond(self, status, data, content_type="application/json; charset=utf-8", download=False, cookie=None):
             if not isinstance(data, bytes):
                 data = json.dumps(data, ensure_ascii=False).encode("utf-8")
             self.send_response(status)
@@ -41,17 +50,42 @@ def make_server(engine: Engine, port: int = 8765, contract_workdir=None, rationa
             self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
             if download:
                 self.send_header("Content-Disposition", 'attachment; filename="supplier-handover.md"')
+            if cookie: self.send_header('Set-Cookie',cookie)
             self.end_headers()
             self.wfile.write(data)
+
+        def permitted(self, permission):
+            if not security:
+                if engine._meta('dashboard_access_mode')=='rbac':
+                    self.respond(403,{'error':'This database requires its protected dashboard'})
+                    return False
+                return True
+            principal = security.principal(self.headers.get('Cookie'))
+            if not principal:
+                self.respond(401,{'error':'Sign in required'})
+                return False
+            if self.headers.get('X-Tenant-Id',engine.tenant_id)!=engine.tenant_id or not security.allows(principal,permission):
+                self.respond(403,{'error':'Role or tenant does not authorize this operation'})
+                return False
+            self.actor = principal['id']
+            return True
 
         def do_GET(self):
             if not self._host_ok():
                 return self.respond(403, {"error": "This application only accepts loopback hostnames."})
             path = urlsplit(self.path).path
+            if path=='/api/session':
+                if not security and engine._meta('dashboard_access_mode')=='rbac': return self.respond(503,{'error':'Use the protected dashboard for this database'})
+                principal = security.principal(self.headers.get('Cookie')) if security else None
+                return self.respond(200,{'secured':bool(security),'principal':principal,'tenant_id':engine.tenant_id,
+                    'permissions': [p for p in ('read','import','review','stage','approve','execute','investigate') if not security or security.allows(principal,p)]})
             if path == '/api/worker/identity':
                 if not engine.coordinator or not engine.coordinator.authorized(self.headers.get('Authorization')):
                     return self.respond(403, {'error': 'Worker authentication required'})
                 return self.respond(200, engine.coordinator.identity())
+            if path.startswith('/api/') and path!='/api/health' and not self.permitted('read'): return
+            if path=='/api/investigations':
+                return self.respond(200,engine.coordinator.investigations() if engine.coordinator else {'jobs':[],'max_attempts':3})
             if path in {"/api/graph", "/api/explanation", "/api/entity-rationale", "/api/feedback-summary"}:
                 try:
                     params = parse_qs(urlsplit(self.path).query)
@@ -111,6 +145,14 @@ def make_server(engine: Engine, port: int = 8765, contract_workdir=None, rationa
                 if not isinstance(data, dict):
                     raise ValidationError("JSON object required.")
                 path = urlsplit(self.path).path
+                if path=='/api/session/login':
+                    if not security: return self.respond(400,{'error':'RBAC is not configured'})
+                    if self.headers.get('Origin')!=f'http://{self.headers.get("Host")}': return self.respond(403,{'error':'Same-origin login required'})
+                    token = security.login(data.get('username'),data.get('password'))
+                    return self.respond(200,{'signed_in':True},cookie='outcome_session='+token+'; HttpOnly; SameSite=Strict; Path=/; Max-Age=1800')
+                if path=='/api/session/logout':
+                    if security: security.logout(self.headers.get('Cookie'))
+                    return self.respond(200,{'signed_in':False},cookie='outcome_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0')
                 if path.startswith('/api/worker/'):
                     if not engine.coordinator or not engine.coordinator.authorized(self.headers.get('Authorization')):
                         return self.respond(403, {'error': 'Worker authentication required'})
@@ -118,6 +160,13 @@ def make_server(engine: Engine, port: int = 8765, contract_workdir=None, rationa
                     if path == '/api/worker/complete': return self.respond(200, engine.coordinator.finish(data))
                     if path == '/api/worker/fail': return self.respond(200, engine.coordinator.finish(data, failed=True))
                     return self.respond(404, {'error': 'Unknown worker operation'})
+                permission = 'import' if path in {'/api/demo','/api/analyze'} else 'review' if path=='/api/reviews' else 'stage' if path=='/api/actions' else 'investigate' if path=='/api/investigations' else 'approve' if path.endswith(('/approve','/retry')) else 'execute' if path.endswith('/execute') else 'read'
+                if not self.permitted(permission): return
+                if security and data.get('tenant_id',engine.tenant_id)!=engine.tenant_id: return self.respond(403,{'error':'Tenant mismatch'})
+                actor = getattr(self,'actor','local_operator')
+                if path=='/api/investigations':
+                    if not engine.coordinator: raise ValueError('Detached coordinator required')
+                    return self.respond(200,engine.coordinator.investigate(data.get('action_id'),actor,data.get('reason')))
                 if path == "/api/demo":
                     return self.respond(200, import_dataset(*demo_csv()))
                 if path == "/api/analyze":
@@ -125,15 +174,15 @@ def make_server(engine: Engine, port: int = 8765, contract_workdir=None, rationa
                 if path == "/api/query":
                     return self.respond(200, engine.query(data.get("question"), data.get("budget_tokens", 2048)))
                 if path == "/api/reviews":
-                    return self.respond(200, engine.review(data.get("evaluation_id"), data.get("human_label"), data.get("reviewer"), data.get("reason"), data.get("supersedes")))
+                    return self.respond(200, engine.review(data.get("evaluation_id"), data.get("human_label"), actor if security else data.get("reviewer"), data.get("reason"), data.get("supersedes")))
                 if path == "/api/actions":
                     if data.get("operation", "sync_supplier") != "sync_supplier" or not isinstance(data.get("entity_id"), str):
                         raise ValidationError("Specify entity_id and operation sync_supplier.")
-                    return self.respond(200, engine.stage_action(data["entity_id"]))
+                    return self.respond(200, engine.stage_action(data["entity_id"],actor))
                 parts = path.strip("/").split("/")
                 if len(parts) == 4 and parts[:2] == ["api", "actions"]:
                     if parts[3] == "approve":
-                        return self.respond(200, engine.approve_action(parts[2]))
+                        return self.respond(200, engine.approve_action(parts[2],actor,separate_duties=bool(security)))
                     if parts[3] == "execute":
                         return self.respond(200, engine.execute_action(parts[2]))
                     if parts[3] == "retry":
@@ -147,6 +196,7 @@ def make_server(engine: Engine, port: int = 8765, contract_workdir=None, rationa
 
         def log_message(self, fmt, *args):
             # Access logs exclude bodies and uploaded source data.
+            if urlsplit(self.path).path.startswith('/api/worker/') or urlsplit(self.path).path.startswith('/api/session/'): return
             super().log_message(fmt, *args)
 
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)

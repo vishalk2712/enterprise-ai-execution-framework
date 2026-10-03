@@ -38,7 +38,11 @@ def intent(action):
 
 
 class MockERP:
-    def __init__(self, db_path, records, api_enabled=False):
+    def __init__(self, db_path, records, api_enabled=False, tenant_id='local', password=None):
+        from .security import validate_tenant
+        validate_tenant(tenant_id)
+        self.tenant_id=tenant_id
+        if password is not None and (not isinstance(password,str) or not 24<=len(password)<=256): raise ValueError('Invalid ERP credential')
         self.api_enabled = api_enabled
         self.authorization_guard = lambda action, signature: nullcontext()
         if str(db_path) != ":memory:":
@@ -47,15 +51,22 @@ class MockERP:
         self.db.row_factory = sqlite3.Row
         self.lock = threading.RLock()
         self.secret = secrets.token_bytes(32)
-        self.password = secrets.token_urlsafe(24)
+        self.password = password or secrets.token_urlsafe(24)
         self.sessions = {}
+        self.capabilities = {}
+        self.clock = time.monotonic
         self.db.executescript("""
           CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS source_suppliers(supplier_id TEXT PRIMARY KEY,payload TEXT NOT NULL,entity_id TEXT);
           CREATE TABLE IF NOT EXISTS supplier_groups(entity_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS receipts(action_id TEXT PRIMARY KEY,intent_hash TEXT NOT NULL,payload TEXT NOT NULL);
         """)
+        stored_tenant = self.db.execute("SELECT value FROM settings WHERE key='tenant_id'").fetchone()
+        if stored_tenant and stored_tenant[0] != tenant_id:
+            self.db.close()
+            raise ValueError('Mock ERP database belongs to another tenant')
         with self.db:
+            self.db.execute("INSERT OR IGNORE INTO settings VALUES('tenant_id',?)", (tenant_id,))
             self.db.execute("INSERT OR IGNORE INTO settings VALUES('instance_id',?)", (secrets.token_hex(16),))
             # Never reset an existing ERP after an import or server restart.
             if not self.db.execute("SELECT 1 FROM settings WHERE key='seeded'").fetchone():
@@ -67,13 +78,23 @@ class MockERP:
         self.origin = None
 
     def binding(self):
-        return {"origin": self.origin, "instance_id": self.instance_id, "adapter": 'mock-erp-rest-v1' if self.api_enabled else ADAPTER}
+        return {"origin": self.origin, "instance_id": self.instance_id, "tenant_id":self.tenant_id, "adapter": 'mock-erp-rest-v1' if self.api_enabled else ADAPTER}
 
     def sign(self, action, expires_at=None, lease=None):
-        deadline = str(int(time.time()+40) if expires_at is None else int(expires_at))
-        prefix = deadline + (':'+lease if lease else '')
+        # Only the issuer interprets the optional legacy absolute-time argument.
+        ttl = 40 if expires_at is None else min(40, expires_at-time.time())
+        with self.lock:
+            self.capabilities = {k:v for k,v in self.capabilities.items() if v > self.clock()}
+            if len(self.capabilities)>=500: raise ValueError('Capability capacity reached')
+            capability = secrets.token_hex(16)
+            self.capabilities[capability] = self.clock()+ttl
+        prefix = 'v2:'+capability+':'+(lease or '-')
         message = canonical(intent(action)) + ':' + prefix
         return prefix + ':' + hmac.new(self.secret, message.encode(), hashlib.sha256).hexdigest()
+
+    def capability_live(self, signature):
+        parts = signature.split(':')
+        return len(parts)==4 and parts[0]=='v2' and self.capabilities.get(parts[1],0)>self.clock()
 
     def receipt(self, action_id):
         with self.lock:
@@ -84,10 +105,8 @@ class MockERP:
         if not isinstance(signature, str) or ':' not in signature:
             raise ValueError("This form has no valid approved execution capability")
         parts = signature.split(':')
-        if len(parts) not in (2, 3): raise ValueError('Invalid capability format')
-        deadline = int(parts[0])
-        lease = parts[1] if len(parts) == 3 else None
-        if deadline < time.time() or deadline > time.time()+45 or not hmac.compare_digest(self.sign(action, deadline, lease), signature):
+        expected = ':'.join(parts[:-1])+':'+hmac.new(self.secret, (canonical(intent(action))+':'+':'.join(parts[:-1])).encode(), hashlib.sha256).hexdigest()
+        if not self.capability_live(signature) or not hmac.compare_digest(expected, signature):
             raise ValueError("This form has no valid approved execution capability")
         if action["target_binding"] != self.binding() or action["operation"] != "sync_supplier":
             raise ValueError("ERP instance or operation changed; approve a fresh action")
@@ -101,7 +120,7 @@ class MockERP:
             raise ValueError("ERP refused inconsistent legal identity evidence")
         digest = fingerprint(intent(action))
         with self.authorization_guard(action, signature), self.lock, self.db:
-            if deadline < time.time():
+            if not self.capability_live(signature):
                 raise ValueError('Execution capability expired before destination write')
             old = self.receipt(action["action_id"])
             if old:
@@ -118,12 +137,12 @@ class MockERP:
             saved = self.db.execute("SELECT payload FROM supplier_groups WHERE entity_id=?", (action["entity_id"],)).fetchone()
             if saved and json.loads(saved[0]) != entity:
                 raise ValueError("ERP group changed; automatic overwrites are disabled")
-            if deadline < time.time():
+            if not self.capability_live(signature):
                 raise ValueError('Execution capability expired before destination write')
             self.db.execute("INSERT OR IGNORE INTO supplier_groups VALUES(?,?)", (action["entity_id"], canonical(entity)))
             for record in records:
                 self.db.execute("UPDATE source_suppliers SET entity_id=? WHERE supplier_id=?", (action["entity_id"], record["supplier_id"]))
-            if deadline < time.time():
+            if not self.capability_live(signature):
                 raise ValueError('Execution capability expired before destination commit')
             receipt = {"action_id": action["action_id"], "entity_id": action["entity_id"], "snapshot": action["snapshot"], "intent_hash": digest,
                        "target_binding": self.binding(), "source_supplier_ids": ids, "payload_hash": fingerprint(entity), "status": "verified"}

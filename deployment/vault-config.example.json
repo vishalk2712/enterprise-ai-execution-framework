@@ -1,0 +1,6 @@
+{
+  "provider": "hashicorp",
+  "url": "https://vault.example.com",
+  "mount": "secret",
+  "token_env": "OUTCOME_VAULT_TOKEN"
+}

@@ -37,6 +37,7 @@
       for (const value of ['Unsure','Match','NonMatch']) { const option = node('option',value); option.value=value; label.append(option); }
       if (item.human_label) label.value=item.human_label;
       const reviewer = node('input'); reviewer.placeholder='Reviewer name'; reviewer.setAttribute('aria-label','Reviewer name'); reviewer.required=true; reviewer.maxLength=100;
+      if (window.outcomePrincipal) { reviewer.value=window.outcomePrincipal.id; reviewer.readOnly=true; }
       const reason = node('input'); reason.placeholder='Evidence and decision reason'; reason.setAttribute('aria-label','Decision reason'); reason.required=true; reason.maxLength=2000;
       const submit = node('button',item.latest_decision ? 'Append corrected label' : 'Save human label'); submit.type='submit'; submit.className='button button-secondary';
       form.append(label,reviewer,reason,submit);
@@ -45,7 +46,8 @@
         try { await get('/api/reviews',{evaluation_id:item.evaluation_id,human_label:label.value,reviewer:reviewer.value,reason:reason.value,supersedes:item.latest_decision?.decision_id || null}); await loadRows(); message('Label saved to persistent history. Supplier groups and portal records were not changed.'); }
         catch(error) { message(error.message); submit.disabled=false; }
       });
-      card.append(form); host.append(card);
+      if (window.outcomeCan('review')) card.append(form);
+      host.append(card);
     }
   }
   async function refreshRuns() {
@@ -71,5 +73,5 @@
     } catch(error) { host.append(node('p',error.message)); }
   });
   window.addEventListener('outcome:dataset',()=>refreshRuns().catch(e=>message(e.message)));
-  refreshRuns().catch(e=>message(e.message));
+  window.outcomeAccessReady.then(()=>{if(window.outcomeCan('read')) return refreshRuns();}).catch(e=>message(e.message));
 })();

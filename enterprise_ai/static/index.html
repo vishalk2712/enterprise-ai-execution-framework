@@ -18,9 +18,15 @@
   </header>
   <main>
     <div id="notification" class="notification" role="status" aria-live="polite" hidden></div>
+    <section class="panel access-panel" aria-label="Workspace access">
+      <div class="panel-heading"><div><div class="eyebrow">WORKSPACE ACCESS</div><h2 id="access-status">Checking access…</h2></div><button id="logout-button" class="button button-secondary" hidden>Sign out</button></div>
+      <form id="login-form" hidden><label>Username <input id="login-name" autocomplete="username" required maxlength="80"></label><label>Password <input id="login-password" type="password" autocomplete="current-password" required maxlength="256"></label><button type="submit" class="button button-primary">Sign in</button></form>
+      <p id="access-note" class="section-note"></p>
+    </section>
+    <div id="workspace-content" hidden>
     <section class="hero" id="overview">
       <div><div class="eyebrow"><span class="short-rule"></span> DATA → EVIDENCE → OUTCOME</div><h1>Clarity across<br>your supplier data.</h1><p>Resolve identities. Understand spend. Move from a source-backed answer to an approved action.</p></div>
-      <div class="hero-aside"><div class="version-tag">WORKING PROTOTYPE / V0.6</div><p>Evidence for every decision.<br>Your data stays in this local workspace.</p><div class="hero-buttons"><button id="demo-button" class="button button-primary" type="button"><span aria-hidden="true">↗</span> Load sample data</button><a id="export-button" class="button button-secondary" href="/api/export" download="supplier-intelligence-report.md">Export report</a></div></div>
+      <div class="hero-aside"><div class="version-tag">WORKING PROTOTYPE / V0.7</div><p>Evidence for every decision.<br>Your data stays in this local workspace.</p><div class="hero-buttons"><button id="demo-button" class="button button-primary" type="button"><span aria-hidden="true">↗</span> Load sample data</button><a id="export-button" class="button button-secondary" href="/api/export" download="supplier-intelligence-report.md">Export report</a></div></div>
     </section>
     <section class="metrics" aria-label="Dataset overview">
       <div class="metric"><span class="metric-label">SUPPLIER RECORDS</span><strong id="supplier-count">—</strong><span>Across imported source rows</span></div>
@@ -46,7 +52,9 @@
       <div class="review-controls"><label>Resolution run <select id="review-run"></select></label><button id="review-refresh" class="button button-secondary">Refresh runs</button><button id="review-prev" class="button button-secondary">Previous pairs</button><button id="review-next" class="button button-secondary">Next pairs</button></div>
       <p id="learning-status" role="status" aria-live="polite"></p><div id="evaluation-list"></div>
     </section>
-    <footer class="page-footer"><div><span class="footer-mark">oe</span> Outcome Engine <span class="footer-separator">/</span> From fragmented data to verifiable work.</div><span>Local prototype · No API key required</span></footer>
+    <section class="panel" id="investigations"><div class="panel-heading"><div><div class="eyebrow">EXECUTION RECOVERY</div><h2>Investigate exhausted attempts</h2></div><span id="investigation-count" class="pill">0 open</span></div><p class="section-note">An investigator can check the destination for an existing receipt and record a finding. Investigation does not reset attempts or replay an action.</p><div id="investigation-list"></div></section>
+    </div>
+    <footer class="page-footer"><div><span class="footer-mark">oe</span> Outcome Engine <span class="footer-separator">/</span> From fragmented data to verifiable work.</div><span>Local prototype · Tenant-isolated sandbox</span></footer>
   </main>
 </body>
 </html>

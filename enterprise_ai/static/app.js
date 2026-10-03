@@ -4,6 +4,8 @@ const $ = (selector) => document.querySelector(selector);
 const numberFormat = new Intl.NumberFormat("en-GB", { maximumFractionDigits: 2 });
 let state = { entities: [], totals: [], supplier_spend: [], review_candidates: [], recent_actions: [] };
 let noticeTimer;
+window.outcomePermissions = [];
+window.outcomeCan = permission => window.outcomePermissions.includes(permission);
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -145,6 +147,7 @@ function renderEntities() {
     basis.append(rationale);
     const action = element("td");
     const button = element("button", "stage-button", "Stage sync ↗");
+    button.disabled = !window.outcomeCan('stage');
     button.type = "button";
     button.setAttribute("aria-label", `Stage local sync for ${entity.display_name}`);
     button.addEventListener("click", () => busy(button, async () => {
@@ -337,6 +340,8 @@ function renderActions() {
       const verb = status === "pending" ? "approve" : browserAction ? 'retry' : "execute";
       const button = element("button", "button button-secondary", status === "pending" ? (browserAction ? 'Approve & queue sync' : "Approve payload") : browserAction ? 'Retry receipt verification' : "Execute locally");
       button.type = "button";
+      button.disabled = !window.outcomeCan(verb==='execute' ? 'execute' : 'approve');
+      if (verb==='approve' && window.outcomePrincipal?.id===action.created_by) button.disabled=true;
       button.addEventListener("click", () => busy(button, async () => {
         await api(`/api/actions/${encodeURIComponent(action.action_id)}/${verb}`, {});
         await refresh();
@@ -382,6 +387,30 @@ async function refreshPortal() {
 async function refresh() {
   renderState(await api("/api/state"));
   await refreshPortal();
+  await refreshInvestigations();
+}
+
+async function refreshInvestigations() {
+  const result = await api('/api/investigations');
+  $('#investigation-count').textContent = `${result.jobs.filter(j=>!j.resolution).length} open`;
+  const host = $('#investigation-list'); host.replaceChildren();
+  if (result.maintenance_error) host.append(element('p','unknowns',result.maintenance_error));
+  if (!result.jobs.length) host.append(element('p','empty-state',`No exhausted jobs. Execution budget: ${result.max_attempts} attempts.`));
+  for (const job of result.jobs) {
+    const card = element('article','action-item');
+    card.append(element('strong','',job.action_id),element('p','section-note',`${job.attempts} attempts · ${job.reason_code} · ${job.resolution || 'ERRORED_REQUIRES_INVESTIGATION'}`));
+    if (window.outcomeCan('investigate')) {
+      const form = element('form','review-form');
+      const reason = element('input'); reason.placeholder='Investigation finding (at least 10 characters)'; reason.required=true; reason.minLength=10; reason.maxLength=1000; reason.setAttribute('aria-label','Investigation finding');
+      const button = element('button','button button-secondary','Check receipt & record finding'); button.type='submit';
+      form.append(reason,button);
+      form.addEventListener('submit',event=>{event.preventDefault();busy(button,async()=>{
+        const finding=await api('/api/investigations',{action_id:job.action_id,reason:reason.value});
+        await refresh(); notify(finding.resolution);
+      });}); card.append(form);
+    }
+    host.append(card);
+  }
 }
 
 $("#demo-button").addEventListener("click", (event) => busy(event.currentTarget, async () => {
@@ -421,4 +450,25 @@ document.querySelectorAll("[data-question]").forEach((button) => button.addEvent
   $("#question").focus();
 }));
 
-refresh().catch((error) => notify(`Unable to load workspace: ${error.message}`, true));
+$('#login-form').addEventListener('submit',event=>{
+  event.preventDefault(); busy(event.currentTarget.querySelector('button'),async()=>{
+    await api('/api/session/login',{username:$('#login-name').value,password:$('#login-password').value});
+    $('#login-password').value=''; window.location.reload();
+  });
+});
+$('#logout-button').addEventListener('click',()=>busy($('#logout-button'),async()=>{
+  await api('/api/session/logout',{}); window.location.reload();
+}));
+window.outcomeAccessReady = (async()=>{
+  const access = await api('/api/session');
+  window.outcomePermissions = access.permissions; window.outcomePrincipal=access.principal;
+  $('#access-status').textContent = access.secured ? (access.principal ? `${access.tenant_id} · ${access.principal.id}` : `Sign in to ${access.tenant_id}`) : `${access.tenant_id} · Unsecured local demo`;
+  $('#access-note').textContent = access.secured ? 'Stewards review and stage. A different authorized approver releases execution. Investigators reconcile exhausted jobs.' : 'All local demo actions are available. Start the server with an identity configuration to enable roles.';
+  $('#login-form').hidden = !access.secured || !!access.principal;
+  $('#logout-button').hidden = !access.principal;
+  $('#workspace-content').hidden = !window.outcomeCan('read');
+  $('#demo-button').disabled = !window.outcomeCan('import');
+  $('#import-panel').hidden = !window.outcomeCan('import');
+  if (access.secured) document.querySelector('#learning > .section-note').textContent='Human labels are attributed to your signed-in identity. Labels never authorize merges or destination writes.';
+  if (window.outcomeCan('read')) await refresh();
+})().catch(error=>notify(`Unable to load workspace: ${error.message}`,true));

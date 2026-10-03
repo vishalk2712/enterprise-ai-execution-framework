@@ -16,3 +16,5 @@ progress.bar-track{appearance:none;-webkit-appearance:none;width:100%;border:0;d
 #knowledge-form input { border:1px solid var(--line); padding:10px; border-radius:6px; max-width:100%; }
 #knowledge-result { font-size:12px; line-height:1.7; overflow-wrap:anywhere; }
 #knowledge-result ul { max-height:280px; overflow:auto; padding-left:22px; }
+
+.access-panel{margin-top:24px}#login-form{display:flex;flex-wrap:wrap;align-items:flex-end;gap:16px}#login-form label{display:flex;flex-direction:column;gap:8px;font-size:12px}#login-form input{border:1px solid var(--line);padding:10px;border-radius:6px;max-width:100%}#investigations{margin-top:24px}

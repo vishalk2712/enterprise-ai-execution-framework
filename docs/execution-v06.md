@@ -1,5 +1,7 @@
 # v0.6: REST execution and detached workers
 
+This is the historical v0.6 guide. [v0.7](security-v07.md) adds bounded attempts, acknowledged-stream compaction, operational retention, roles and vault configuration; use that guide for current security and recovery behavior.
+
 This release adds an API-native **mock ERP contract** and separates worker processes from the dashboard. It does not integrate SAP Ariba or Coupa, move financial transactions, or provide enterprise authentication. Legal identity rules, matching thresholds and human approval remain unchanged.
 
 ## Start without Redis

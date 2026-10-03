@@ -2,17 +2,23 @@
 
 **Supplier intelligence with evidence and approved actions.**
 
-The first working module of an enterprise data-to-outcome framework. Import supplier and invoice CSVs, inspect proposed supplier groups, calculate exact spend by currency, and stage an approved supplier sync to a local portal or a separate mock ERP through a headless browser.
+The first working module of an enterprise data-to-outcome framework. Import supplier and invoice CSVs, inspect proposed supplier groups, calculate exact spend by currency, and stage an approved supplier sync to a local portal or a separate mock ERP through REST or a headless browser.
 
 The core runs on a laptop with Python 3.10+ and no extra packages, GPU, API key or cloud account. Browser execution optionally adds Node.js and Playwright. Factual summaries optionally use an already installed local Ollama model. Resolution remains governed by deterministic rules and the explicitly configured classifier; no newly trained LLM is bundled.
 
-## New in v0.5
+## New in v0.6
+
+**API-native mock ERP execution** uses approved JSON, an idempotency key, source preconditions and an independently reloaded receipt. **Detached workers** consume through authenticated HTTP without opening the coordinator's SQLite file or holding its lock during network execution. Optional **Redis Streams** delivery adds consumer groups, pending-job recovery and a transactional outbox; messages contain job references only.
+
+Start `serve --api-erp` and a separate `worker` process. For DOM workers use `serve --browser-erp --distributed`. Read the [v0.6 setup and execution guide](docs/execution-v06.md) for commands, Redis configuration, crash recovery and destination fencing limits. These are working local adapters, not SAP Ariba/Coupa integrations or a deployed multi-host service.
+
+## Included from v0.5
 
 **Explain this group** now shows a two-sentence summary of legal identity evidence and measured similarities. An optional local model selects validated fact IDs; it cannot invent prose, change a match decision or authorize an action. Snapshot-bound summaries persist in the audit history with explicit fallback when Ollama is unavailable.
 
 `serve --browser-erp` starts a separate mock ERP and a durable headless browser queue. **Approve & run browser** binds approval to the exact payload, source evidence, dataset and ERP instance. The worker signs in, navigates indexed DOM controls and submits the approved form. Completion requires a reloaded receipt and actual destination verification; retries recover existing receipts without submitting again.
 
-Read the [v0.5 execution guide](docs/execution-v05.md) for setup, tests and failure semantics. This is an original bounded DOM adapter inspired by Jev's methodology, with no paid API dependency or general-purpose swarm claim. Real ERP authorization and distributed execution remain future work.
+Read the [v0.5 execution guide](docs/execution-v05.md) for browser setup and factual summaries. This is an original bounded DOM adapter inspired by Jev's methodology, with no paid API dependency or general-purpose swarm claim. Real vendor authorization and enterprise deployment remain future work.
 
 ## Corporate governance from v0.4
 
@@ -66,7 +72,7 @@ python -m enterprise_ai --db .outcome/experiment.sqlite serve --demo
 | Spend | Decimal arithmetic, credit values, exact-duplicate exclusion, totals and supplier rankings per currency |
 | Evidence | Source file and physical row references, dataset hashes, supplier/invoice relationships, bounded evidence excerpts |
 | Questions | Transparent rules for supported identity and spend questions; no external model calls |
-| Actions | Default SQLite portal or opt-in separate mock ERP through a headless browser; exact approved intents, durable queue, expiring capabilities and verified receipts |
+| Actions | Default SQLite portal or opt-in mock ERP through REST/DOM; exact approved intents, durable queue/outbox, detached HTTP or Redis workers, fenced capabilities and verified receipts |
 | Interface | Local dashboard, group rationales, graph preview, persistent reviews, worker status, destination receipts and downloadable audit/report |
 
 The distinguishing product hypothesis is the complete chain from **source row → identity decision → spend result → reviewed change → verified destination**. It needs customer testing; it is not a claim of proven market advantage.
@@ -119,8 +125,9 @@ flowchart LR
     UI --> P[Stage proposed sync]
     P --> A[Human approval]
     A --> M[Default local portal]
-    A --> Q[Optional durable browser queue]
-    Q --> ERP[Separate mock ERP HTML form]
+    A --> Q[Durable jobs and transactional outbox]
+    Q --> W[Detached HTTP or Redis workers]
+    W --> ERP[Separate mock ERP REST or HTML]
     ERP --> RC[Reload and verify receipt]
     E --> RA[Optional local fact-plan rationale]
     RA --> UI
@@ -130,6 +137,7 @@ flowchart LR
 - `enterprise_ai/server.py`: loopback HTTP API and static application serving.
 - `enterprise_ai/explanations.py`: factual summaries and optional local model fact plans.
 - `enterprise_ai/execution.py`, `browser_worker.mjs`, `mock_erp.py`: durable jobs, bounded DOM execution and a separate destination sandbox.
+- `enterprise_ai/api_adapter.py`, `distributed.py`, `worker.py`, `broker.py`: REST receipts, short coordinator transactions, detached HTTP workers and Redis Streams delivery.
 - `enterprise_ai/static/`: accessible vanilla HTML, CSS and JavaScript; no CDN dependencies.
 - `examples/`: inspectable synthetic data; packaged copies live under `enterprise_ai/data/`.
 - `tests/`: acceptance, regression and HTTP checks using independently authored fixtures.

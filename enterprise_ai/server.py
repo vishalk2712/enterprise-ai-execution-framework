@@ -16,7 +16,7 @@ def demo_csv():
             (root / "spend.csv").read_text(encoding="utf-8"))
 
 
-def make_server(engine: Engine, port: int = 8765, contract_workdir=None):
+def make_server(engine: Engine, port: int = 8765, contract_workdir=None, rationale_model=None):
     def import_dataset(suppliers, spend):
         if contract_workdir:
             from .contracts import run_dbt_contracts
@@ -24,7 +24,7 @@ def make_server(engine: Engine, port: int = 8765, contract_workdir=None):
             return engine.analyze(suppliers, spend, normalized, contract)
         return engine.analyze(suppliers, spend)
     class Handler(BaseHTTPRequestHandler):
-        server_version = "OutcomeEngine/0.4"
+        server_version = "OutcomeEngine/0.5"
 
         def _host_ok(self):
             return self.headers.get("Host") in {f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}
@@ -48,13 +48,15 @@ def make_server(engine: Engine, port: int = 8765, contract_workdir=None):
             if not self._host_ok():
                 return self.respond(403, {"error": "This application only accepts loopback hostnames."})
             path = urlsplit(self.path).path
-            if path in {"/api/graph", "/api/explanation", "/api/feedback-summary"}:
+            if path in {"/api/graph", "/api/explanation", "/api/entity-rationale", "/api/feedback-summary"}:
                 try:
                     params = parse_qs(urlsplit(self.path).query)
                     if path == "/api/feedback-summary":
                         return self.respond(200, engine.feedback_summary())
                     if path == "/api/explanation":
                         return self.respond(200, engine.explain(params.get("evaluation_id", [""])[0]))
+                    if path == "/api/entity-rationale":
+                        return self.respond(200, engine.explain_entity(params.get('entity_id', [''])[0], rationale_model))
                     return self.respond(200, engine.graph_neighbors(params.get("node_id", [""])[0], int(params.get("hops", [2])[0]), int(params.get("limit", [100])[0]), params.get("relation", [None])[0]))
                 except ValueError as exc:
                     return self.respond(400, {"error": str(exc)})
@@ -75,7 +77,8 @@ def make_server(engine: Engine, port: int = 8765, contract_workdir=None):
             if path == "/api/portal":
                 return self.respond(200, engine.portal())
             if path == "/api/health":
-                return self.respond(200, {"status": "ok", "mode": "local-deterministic", "version": "0.4.0"})
+                return self.respond(200, {"status": "ok", "mode": "local-governed", "version": "0.5.0", "rationale_model": rationale_model,
+                                           "browser_execution": engine.browser_erp is not None})
             if path == "/api/export":
                 return self.respond(200, engine.export_report().encode("utf-8"), "text/markdown; charset=utf-8", True)
             assets = {"/": ("index.html", "text/html"), "/static/app.js": ("app.js", "text/javascript"), "/static/reviews.js": ("reviews.js", "text/javascript"), "/static/style.css": ("style.css", "text/css")}
@@ -121,6 +124,8 @@ def make_server(engine: Engine, port: int = 8765, contract_workdir=None):
                         return self.respond(200, engine.approve_action(parts[2]))
                     if parts[3] == "execute":
                         return self.respond(200, engine.execute_action(parts[2]))
+                    if parts[3] == "retry":
+                        return self.respond(200, engine.retry_browser_action(parts[2]))
                 self.respond(404, {"error": "Not found."})
             except (ValidationError, ValueError, UnicodeError) as exc:
                 self.respond(400, {"error": str(exc)})

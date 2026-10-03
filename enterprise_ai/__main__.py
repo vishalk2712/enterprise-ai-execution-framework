@@ -29,6 +29,10 @@ def main():
     serve.add_argument("--port", type=int, default=8765)
     serve.add_argument("--demo", action="store_true", help="Replace the current dataset with the synthetic demo")
     serve.add_argument("--require-dbt", action="store_true", help="Gate every web import through dbt")
+    serve.add_argument('--rationale-model', help='Already installed local Ollama model for factual group summaries')
+    serve.add_argument('--browser-erp', action='store_true', help='Run a separate mock ERP and execute approved payloads using a headless DOM worker')
+    serve.add_argument('--erp-port', type=int, default=8770)
+    serve.add_argument('--erp-db', help='Separate persistent mock ERP database; never use the engine database')
     audit = sub.add_parser("audit-export", help="Export immutable evaluations and separate review labels")
     audit.add_argument("--output", required=True)
     labels = sub.add_parser("labels-export", help="Export latest definite labels for explicit grouping and split assignment")
@@ -125,15 +129,45 @@ def main():
                     engine.analyze(*demo_csv(), normalized, contract)
                 else:
                     engine.analyze(*demo_csv())
-            server = make_server(engine, args.port, ".outcome/contracts" if args.require_dbt else None)
+            erp_server = worker = None
+            if args.browser_erp:
+                import threading
+                from .mock_erp import MockERP, make_erp_server
+                from .execution import BrowserWorker
+                records = engine._records('suppliers')
+                if not records:
+                    raise ValueError('Import a dataset first or use --demo to seed the mock ERP')
+                erp_path = Path(args.erp_db) if args.erp_db else Path(args.db).with_name(Path(args.db).stem+'-mock-erp.sqlite')
+                if erp_path.resolve() == Path(args.db).resolve():
+                    raise ValueError('The mock ERP must use a separate database')
+                engine.browser_erp = MockERP(erp_path, records)
+                erp_server = make_erp_server(engine.browser_erp, args.erp_port)
+                worker = BrowserWorker(engine)
+            try:
+                server = make_server(engine, args.port, ".outcome/contracts" if args.require_dbt else None, args.rationale_model)
+            except OSError:
+                if erp_server:
+                    erp_server.server_close()
+                    engine.browser_erp.close()
+                raise
+            if worker:
+                threading.Thread(target=erp_server.serve_forever, daemon=True).start()
+                worker.start()
             print(f"Outcome Engine: http://127.0.0.1:{server.server_port}", flush=True)
             print("Local demo only. Ctrl+C to stop. Data stays in your configured SQLite file.", flush=True)
+            if engine.browser_erp:
+                print(f'Mock ERP: {engine.browser_erp.origin} (separate sandbox database). Approval queues the browser worker.', flush=True)
             try:
                 server.serve_forever()
             except KeyboardInterrupt:
                 pass
             finally:
                 server.server_close()
+                if worker:
+                    worker.close()
+                    erp_server.shutdown()
+                    erp_server.server_close()
+                    engine.browser_erp.close()
     except (ValueError, OSError) as exc:
         parser.exit(2, f"Error: {exc}\n")
     finally:

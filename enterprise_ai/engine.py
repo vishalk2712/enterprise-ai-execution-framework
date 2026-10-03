@@ -1,6 +1,7 @@
 """Deterministic baseline: identity resolution, exact spend and staged local actions.
 
-No API calls or model inference occur here. Source values are data, never commands.
+Resolution remains deterministic. Optional explanations and approved browser jobs are separate.
+Source values are data, never commands.
 """
 from __future__ import annotations
 
@@ -107,6 +108,7 @@ class Engine:
         if not isinstance(dataset_namespace, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", dataset_namespace):
             raise ValueError("dataset_namespace must be 1..80 letters, digits, underscores or hyphens")
         self.dataset_namespace = dataset_namespace
+        self.browser_erp = None
         self.match_config = match_config or MatchConfig()
         self.calibration = calibration
         self.pair_model = pair_model
@@ -142,6 +144,12 @@ class Engine:
         from . import feedback, knowledge_graph
         feedback.migrate(self.db)
         knowledge_graph.migrate(self.db)
+        from .execution import migrate
+        migrate(self.db)
+        self.db.execute("""CREATE TABLE IF NOT EXISTS entity_rationales(
+            snapshot TEXT NOT NULL,entity_id TEXT NOT NULL,model_key TEXT NOT NULL,payload TEXT NOT NULL,
+            PRIMARY KEY(snapshot,entity_id,model_key))""")
+        self.db.commit()
 
     def close(self):
         self.db.close()
@@ -381,9 +389,35 @@ class Engine:
             item["evaluation_id"] = evaluation_id
         return explain(item, model)
 
+    def explain_entity(self, entity_id, model=None):
+        from .explanations import explain_group
+        with self.lock:
+            row = self.db.execute("SELECT payload FROM entities WHERE entity_id=?", (entity_id,)).fetchone()
+            if not row:
+                raise ValidationError("Entity not found in the current dataset")
+            snapshot = self._meta('dataset')['snapshot']
+            cached = self.db.execute("SELECT payload FROM entity_rationales WHERE snapshot=? AND entity_id=? AND model_key=?", (snapshot, entity_id, model or '')).fetchone()
+            if cached:
+                return json.loads(cached[0])
+            entity = json.loads(row[0])
+            records = [json.loads(r[0]) for r in self.db.execute("SELECT payload FROM suppliers WHERE entity_id=? ORDER BY supplier_id", (entity_id,))]
+        result = explain_group(entity, records, model, self.match_config)
+        result['snapshot'] = snapshot
+        result['created_at'] = now()
+        result['matching_config_id'] = self.match_config.config_id
+        # Do not cache an unavailable model: it can be retried once installed.
+        with self.lock, self.db:
+            if not result.get('fallback'):
+                self.db.execute("INSERT OR IGNORE INTO entity_rationales VALUES(?,?,?,?)", (snapshot, entity_id, model or '', json.dumps(result)))
+        return result
+
     def export_audit(self):
         with self.lock:
-            return "\n".join(resolution_audit.export_history(self.db)) + "\n"
+            lines = list(resolution_audit.export_history(self.db))
+            for table in ('actions', 'execution_jobs', 'entity_rationales', 'audit'):
+                for row in self.db.execute(f'SELECT * FROM {table} ORDER BY rowid'):
+                    lines.append(json.dumps({'table': table, **dict(row)}, ensure_ascii=False))
+            return '\n'.join(lines) + '\n'
 
     def export_labels(self):
         with self.lock:
@@ -431,7 +465,9 @@ class Engine:
             return {"dataset": self._meta("dataset", {"supplier_count": 0, "invoice_count": 0, "currencies": [], "source_hashes": {}}),
                     "entities": entities, "totals": [{"currency": c, "amount": f"{v:.2f}", "invoice_count": counts[c]} for c, v in sorted(totals.items())],
                     "supplier_spend": spend, "review_candidates": self._meta("reviews", []), "warnings": self._meta("warnings", []),
-                    "graph": {"nodes": nodes, "edges": edges}, "recent_actions": self._actions()}
+                    "graph": {"nodes": nodes, "edges": edges}, "recent_actions": self._actions(),
+                    "execution_mode": "browser_mock_erp" if self.browser_erp else "local_mock_portal",
+                    "execution_target": self.browser_erp.binding() if self.browser_erp else None}
 
     def query(self, question: str, budget_tokens: int = 2048) -> dict:
         if not isinstance(question, str) or not question.strip() or len(question) > 2000:
@@ -542,9 +578,7 @@ class Engine:
     def _actions(self):
         actions = []
         for row in self.db.execute("SELECT * FROM actions ORDER BY rowid DESC LIMIT 50"):
-            data = json.loads(row["payload"])
-            data.update(action_id=row["action_id"], status=row["status"], snapshot=row["snapshot"])
-            actions.append(data)
+            actions.append(self._action(row['action_id']))
         return actions
 
     def _action(self, action_id):
@@ -553,9 +587,25 @@ class Engine:
             raise ValidationError("Action not found.")
         data = json.loads(row["payload"])
         data.update(action_id=row["action_id"], status=row["status"], snapshot=row["snapshot"])
+        if data.get('target') == 'browser_mock_erp':
+            from .execution import job_state
+            data['execution'] = job_state(self, action_id)
         return data
 
     def _portal_matches(self, action: dict) -> bool:
+        if action.get('target') == 'browser_mock_erp':
+            if self.browser_erp is None or action.get('target_binding') != self.browser_erp.binding():
+                return False
+            try:
+                from .mock_erp import fingerprint, intent
+                with self.browser_erp.lock:
+                    receipt = self.browser_erp.receipt(action['action_id'])
+                    if not receipt or receipt['intent_hash'] != fingerprint(intent(action)):
+                        return False
+                    self.browser_erp.verify(receipt)
+                return True
+            except ValueError:
+                return False
         row = self.db.execute("SELECT payload FROM portal WHERE entity_id=?", (action["entity_id"],)).fetchone()
         if not row:
             return False
@@ -579,6 +629,8 @@ class Engine:
                 if json.loads(old_row["payload"])["entity_id"] != entity_id:
                     continue
                 old = self._action(old_row["action_id"])
+                if old.get('target_binding') != (self.browser_erp.binding() if self.browser_erp else None):
+                    continue
                 if old["status"] in {"pending", "approved"} or (old["status"] == "executed" and self._portal_matches(old)):
                     return old
                 break
@@ -586,8 +638,11 @@ class Engine:
             payload = {"entity_id": entity_id, "operation": "sync_supplier", "target": "local_mock_portal", "created_at": now(),
                        "payload": entity,
                        "evidence": [evidence(json.loads(r[0])) for r in self.db.execute("SELECT payload FROM suppliers WHERE entity_id=?", (entity_id,))]}
+            if self.browser_erp:
+                from .execution import stage_payload
+                payload.update(stage_payload(self, entity), target='browser_mock_erp')
             self.db.execute("INSERT INTO actions VALUES(?,?,?,?)", (action_id, snapshot, "pending", json.dumps(payload)))
-            self._log("action_staged", {"action_id": action_id, "target": "local_mock_portal"})
+            self._log("action_staged", {"action_id": action_id, "target": payload['target']})
             return self._action(action_id)
 
     def approve_action(self, action_id: str) -> dict:
@@ -596,13 +651,30 @@ class Engine:
             if action["snapshot"] != self._meta("dataset", {}).get("snapshot") or action["status"] == "stale":
                 raise ValidationError("Stale action; stage a new action from the current dataset.")
             if action["status"] == "pending":
+                if action.get('target') == 'browser_mock_erp' and (self.browser_erp is None or action.get('target_binding') != self.browser_erp.binding()):
+                    raise ValidationError('ERP target changed; stage a fresh action before approval')
                 self.db.execute("UPDATE actions SET status='approved' WHERE action_id=?", (action_id,))
                 self._log("action_approved", {"action_id": action_id, "actor": "local_operator"})
+                if action.get('target') == 'browser_mock_erp':
+                    from .execution import enqueue
+                    enqueue(self, self._action(action_id))
+            return self._action(action_id)
+
+    def retry_browser_action(self, action_id):
+        from .execution import retry
+        with self.lock, self.db:
+            action = self._action(action_id)
+            if action.get('target') != 'browser_mock_erp':
+                raise ValidationError('This action does not target the browser ERP')
+            retry(self, action)
+            self._log('browser_retry_requested', {'action_id': action_id})
             return self._action(action_id)
 
     def execute_action(self, action_id: str) -> dict:
         with self.lock, self.db:
             action = self._action(action_id)
+            if action.get('target') == 'browser_mock_erp':
+                raise ValidationError('Browser actions execute through the approved worker queue; use retry after a failure')
             if action["snapshot"] != self._meta("dataset", {}).get("snapshot"):
                 raise ValidationError("Stale action; the dataset changed after this action was staged.")
             if action["status"] == "executed":
@@ -618,6 +690,13 @@ class Engine:
 
     def portal(self) -> dict:
         with self.lock:
+            if self.browser_erp:
+                with self.browser_erp.lock:
+                    rows = [json.loads(r[0]) for r in self.browser_erp.db.execute('SELECT payload FROM supplier_groups ORDER BY entity_id')]
+                    for row in rows:
+                        receipt = self.browser_erp.db.execute('SELECT payload FROM receipts WHERE json_extract(payload,\'$.entity_id\')=? ORDER BY rowid DESC LIMIT 1', (row['entity_id'],)).fetchone()
+                        row['stale'] = not receipt or json.loads(receipt[0])['snapshot'] != self._meta('dataset', {}).get('snapshot')
+                return {'suppliers': rows, 'target': 'browser_mock_erp', 'target_binding': self.browser_erp.binding()}
             snapshot = self._meta("dataset", {}).get("snapshot")
             rows = [json.loads(r[0]) for r in self.db.execute("SELECT payload FROM portal ORDER BY entity_id")]
             for row in rows:
@@ -653,5 +732,5 @@ class Engine:
             for row in self._records("suppliers") + self._records("invoices"):
                 item = evidence(row)
                 parts.append(f"- {item['source']}:{item['line']} — {safe(item['excerpt'])}")
-            parts += ["", "## Limits", "", "Identifiers are supplied data, not independently verified legal identity. Similar names require review. Currency totals are not converted or combined. The schema accepts amounts with at most two decimal places. Action execution targets only the local mock portal. General reasoning, trained routing, live ERP connectors and DOM automation are future work.", ""]
+            parts += ["", "## Limits", "", "Identifiers are supplied data, not independently verified legal identity. Similar names require review. Currency totals are not converted or combined. The schema accepts amounts with at most two decimal places. Action execution targets only the configured local sandbox. Optional DOM automation uses a separate mock ERP; live ERP adapters, production authentication and distributed execution are future work. Local LLM summaries select verified facts and cannot authorize writes.", ""]
             return "\n".join(parts)

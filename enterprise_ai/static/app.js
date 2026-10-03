@@ -4,6 +4,7 @@ const $ = (selector) => document.querySelector(selector);
 const numberFormat = new Intl.NumberFormat("en-GB", { maximumFractionDigits: 2 });
 let state = { entities: [], totals: [], supplier_spend: [], review_candidates: [], recent_actions: [] };
 let noticeTimer;
+let candidateOffset = 0, candidateRevision = 0;
 window.outcomePermissions = [];
 window.outcomeCan = permission => window.outcomePermissions.includes(permission);
 
@@ -80,10 +81,12 @@ function renderState(next) {
   state = next || {};
   const data = state.dataset || {};
   const loaded = Boolean(state.dataset);
+  candidateOffset = 0;
+  candidateRevision++;
   $("#supplier-count").textContent = loaded ? numberFormat.format(data.supplier_count || 0) : "—";
   $("#entity-count").textContent = loaded ? numberFormat.format((state.entities || []).length) : "—";
   $("#invoice-count").textContent = loaded ? numberFormat.format(data.invoice_count || 0) : "—";
-  $("#review-count").textContent = loaded ? numberFormat.format((state.review_candidates || []).length) : "—";
+  $("#review-count").textContent = loaded ? numberFormat.format(state.review_candidate_total ?? (state.review_candidates || []).length) : "—";
   const warnings = $("#dataset-warnings");
   warnings.replaceChildren();
   warnings.hidden = !(state.warnings || []).length;
@@ -95,6 +98,7 @@ function renderState(next) {
   renderSpend();
   renderGraph();
   renderReviews(loaded);
+  renderSourceProfile();
   renderActions();
   const browserMode = state.execution_mode === 'browser_mock_erp';
   const apiMode = state.execution_mode === 'api_mock_erp';
@@ -210,10 +214,11 @@ function renderGraph() {
   host.replaceChildren();
   const graph = state.graph || { nodes: [], edges: [] };
   const allNodes = graph.nodes || [];
+  const totalNodes = graph.node_total ?? allNodes.length;
   const nodes = allNodes.slice(0, 24);
-  $("#graph-count").textContent = `${allNodes.length} nodes`;
-  $("#graph-note").textContent = allNodes.length > nodes.length
-    ? `Showing ${nodes.length} of ${allNodes.length} nodes. The full dataset remains available to queries.`
+  $("#graph-count").textContent = `${totalNodes} nodes`;
+  $("#graph-note").textContent = totalNodes > nodes.length
+    ? `Showing ${nodes.length} of ${totalNodes} nodes. The full dataset remains available to queries.`
     : "Connections make the evidence inspectable; they do not guarantee correctness.";
   if (!nodes.length) {
     host.append(element("p", "empty-state", "A source-linked graph will appear here."));
@@ -223,7 +228,7 @@ function renderGraph() {
   const title = svgElement("title", { id: "graph-title" });
   title.textContent = "Supplier evidence relationship graph";
   const description = svgElement("desc", { id: "graph-description" });
-  description.textContent = `Graph contains ${allNodes.length} nodes and ${(graph.edges || []).length} relationships. Displayed labels: ${nodes.map((node) => node.label).join(", ")}.`;
+  description.textContent = `Graph contains ${totalNodes} nodes and ${graph.edge_total ?? (graph.edges || []).length} relationships. Displayed labels: ${nodes.map((node) => node.label).join(", ")}.`;
   svg.append(title, description);
   const columns = ["source", "entity", "other"];
   const positions = new Map();
@@ -258,10 +263,47 @@ function renderGraph() {
   host.append(svg);
 }
 
-function renderReviews(loaded) {
+function renderSourceProfile() {
+  const contract = state.dataset?.matching_statistics?.upstream_contract;
+  const source = contract?.source_adapter || contract;
+  const host = $('#source-profile');
+  host.replaceChildren();
+  host.hidden = !source?.version?.startsWith('source-adapter-');
+  if (host.hidden) return;
+  host.append(element('h2', '', 'Source preparation evidence'));
+  host.append(element('p', 'section-note', `Source system: ${source.source_system}. Column mappings are operator assertions; registry verification remains separate.`));
+  for (const table of ['suppliers', 'spend']) {
+    const profile = source.profiles?.[table];
+    if (!profile) continue;
+    const details = element('details');
+    details.append(element('summary', '', `${table}: ${profile.row_count} source rows · ${profile.columns.length} columns · ${source[table].rows} prepared · ${source[table].rejected} rejected`));
+    details.append(element('p', 'section-note', `Mapping ${source[table].mapping_id}. Encoding ${profile.encoding}; ${profile.header_row} rows above the header.`));
+    const list = element('ul');
+    for (const column of profile.columns) list.append(element('li', '', `${column.name}: ${Math.round(column.fill_rate * 100)}% filled · ${column.placeholders} placeholders · ${column.type}`));
+    details.append(list); host.append(details);
+  }
+}
+
+async function pageCandidates(delta) {
+  const offset = Math.max(0, candidateOffset + delta);
+  const revision = ++candidateRevision;
+  const page = await api(`/api/review-candidates?limit=200&offset=${offset}`);
+  if (revision !== candidateRevision) return;
+  if (page.snapshot !== state.dataset?.snapshot) {
+    renderState(await api('/api/state'));
+    notify('The dataset changed. The review list was refreshed.');
+    return;
+  }
+  candidateOffset = offset;
+  renderReviews(true, page.review_candidates, page.total);
+}
+
+function renderReviews(loaded, candidates = state.review_candidates || [], total = state.review_candidate_total ?? candidates.length) {
   const host = $("#review-list");
   host.replaceChildren();
-  const candidates = state.review_candidates || [];
+  $('#candidate-status').textContent = `Showing ${total ? candidateOffset + 1 : 0}–${Math.min(candidateOffset + candidates.length, total)} of ${total} candidates`;
+  $('#candidate-prev').disabled = candidateOffset === 0;
+  $('#candidate-next').disabled = candidateOffset + candidates.length >= total;
   if (!candidates.length) {
     host.append(element("p", "empty-state", loaded ? "No ambiguous identity candidates were flagged by the current rules. This does not prove that every identity is correct." : "Load data to check for ambiguous identities."));
     return;
@@ -472,3 +514,6 @@ window.outcomeAccessReady = (async()=>{
   if (access.secured) document.querySelector('#learning > .section-note').textContent='Human labels are attributed to your signed-in identity. Labels never authorize merges or destination writes.';
   if (window.outcomeCan('read')) await refresh();
 })().catch(error=>notify(`Unable to load workspace: ${error.message}`,true));
+
+$("#candidate-prev").addEventListener("click", () => pageCandidates(-200).catch(e => notify(e.message, true)));
+$("#candidate-next").addEventListener("click", () => pageCandidates(200).catch(e => notify(e.message, true)));

@@ -2,6 +2,8 @@
 
 The matching, calibration, audit and batch modules are independent of HTTP/UI code. The checked-in Azure pipeline and Fabric notebook are deployment templates; neither has been deployed into a cloud workspace.
 
+v0.5 adds optional local fact-plan rationales and a bounded browser worker for a separate mock ERP. See the [execution guide](execution-v05.md). Browser execution remains outside the Fabric batch job; scaling requires destination-side concurrency controls and authenticated approvals instead of the laptop's SQLite transaction fence. GitHub CI includes genuine headless browser tests in its optional-dependency job.
+
 v0.4 adds a stable dataset namespace, transactional reviewer training evidence, four-cohort calibrated supplier fitting and indexed relationship queries. The optional training job now checks review-based fitting and Parquet exports. See the [v0.4 governance guide](governance-v04.md) for cohort persistence and why refits never activate weights automatically. The notebook's namespace is a cohort key, not tenant authorization; its temporary engine database still does not provide a central review service.
 
 ## Azure DevOps

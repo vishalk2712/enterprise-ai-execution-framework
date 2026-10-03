@@ -122,7 +122,10 @@ def main():
         try: run_worker(args.coordinator, args.token_file or default_token, os.environ.get(args.redis_url_env), args.consumer, args.once,
                         token=secret(args.token_ref) if args.token_ref else None, tenant=args.tenant_id)
         except KeyboardInterrupt: pass
-        except (ValueError, OSError): parser.exit(2, 'Worker could not connect or verify completion; inspect configuration.\n')
+        except (ValueError, OSError) as error:
+            from urllib.error import HTTPError
+            detail = ' ('+getattr(error,'outcome_operation','request')+' HTTP '+str(error.code)+')' if isinstance(error,HTTPError) else ' ('+type(error).__name__+')'
+            parser.exit(2, 'Worker could not connect or verify completion'+detail+'; inspect configuration.\n')
         return
     from .matching import MatchConfig
     try:

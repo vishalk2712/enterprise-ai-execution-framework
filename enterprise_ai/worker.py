@@ -4,6 +4,7 @@ from pathlib import Path
 import time
 from urllib.parse import urlsplit
 from urllib.request import Request, build_opener, ProxyHandler
+from urllib.error import HTTPError
 from .explanations import NoRedirect
 from .api_adapter import run_api, API_ADAPTER
 from .execution import run_browser_grant
@@ -21,7 +22,11 @@ class WorkerClient:
     def request(self, path, data=None):
         body = json.dumps(data).encode() if data is not None else None
         request = Request(self.origin+'/api/worker/'+path, body, {'Authorization': 'Bearer '+self.token, 'Content-Type': 'application/json'})
-        with self.opener.open(request, timeout=8) as response:
+        try: response = self.opener.open(request, timeout=8)
+        except HTTPError as error:
+            error.outcome_operation = path
+            raise
+        with response:
             body = response.read(150001)
             if len(body) > 150000: raise ValueError('Coordinator response exceeded bound')
             return json.loads(body)

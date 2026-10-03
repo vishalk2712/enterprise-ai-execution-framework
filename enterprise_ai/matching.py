@@ -11,7 +11,7 @@ from .normalization import VERSION, identifier, name_key, ngrams, soundex, token
 
 @dataclass(frozen=True)
 class MatchConfig:
-    version: str = "indexed-governance-v4"
+    version: str = "indexed-governance-v5"
     normalization_version: str = VERSION
     ngram_size: int = 3
     min_shared_grams: int = 2
@@ -27,14 +27,18 @@ class MatchConfig:
     address_weight: float = .20
     postcode_weight: float = .10
     graph_blocking: bool = True
+    min_authority_length: int = 0
+    max_authority_group: int = 25
 
     def __post_init__(self):
         if not isinstance(self.graph_blocking, bool):
             raise ValueError("graph_blocking must be boolean")
-        for field in ("ngram_size", "min_shared_grams", "max_posting", "max_candidates_per_record", "max_evaluations", "max_feature_chars", "excluded_tax_sample_size", "random_seed"):
+        for field in ("ngram_size", "min_shared_grams", "max_posting", "max_candidates_per_record", "max_evaluations", "max_feature_chars", "excluded_tax_sample_size", "random_seed", "min_authority_length", "max_authority_group"):
             value = getattr(self, field)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError(f"{field} must be a non-negative integer")
+        if self.max_authority_group < 2:
+            raise ValueError("max_authority_group must be at least 2")
         if not 2 <= self.ngram_size <= 5 or self.min_shared_grams < 1 or self.max_posting < 2 or self.max_candidates_per_record < 1 or self.max_evaluations < 1 or not 16 <= self.max_feature_chars <= 1000:
             raise ValueError("Invalid candidate or feature bounds")
         if not 0 <= self.near_miss_floor < self.review_threshold <= 1:

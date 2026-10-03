@@ -26,6 +26,10 @@ def main():
     analyze.add_argument("--suppliers", required=True)
     analyze.add_argument("--spend", required=True)
     analyze.add_argument("--output", default=".outcome/supplier-report.md")
+    prepared = sub.add_parser("analyze-prepared", help="Validate and import adapter artifacts with mapping-bound approval snapshots")
+    prepared.add_argument("--input-dir", required=True)
+    prepared.add_argument("--require-dbt", action="store_true")
+    prepared.add_argument("--output", default=".outcome/supplier-report.md")
     query = sub.add_parser("query", help="Ask a bounded question about imported data")
     query.add_argument("question")
     query.add_argument("--budget-tokens", type=int, default=2048)
@@ -62,6 +66,9 @@ def main():
     maintenance.add_argument('--vacuum', action='store_true', help='Reclaim SQLite file space; stop the server and workers before running')
     audit = sub.add_parser("audit-export", help="Export immutable evaluations and separate review labels")
     audit.add_argument("--output", required=True)
+    verify = sub.add_parser("audit-verify", help="Verify operational event hashes against an optional retained checkpoint")
+    verify.add_argument("--checkpoint")
+    verify.add_argument("--output", help="Write a checkpoint to retain outside the database")
     labels = sub.add_parser("labels-export", help="Export latest definite labels for explicit grouping and split assignment")
     labels.add_argument("--output", required=True)
     review = sub.add_parser("review", help="Append a human label; does not merge suppliers")
@@ -139,9 +146,14 @@ def main():
     except (ValueError, TypeError, OSError) as exc:
         parser.exit(2, f"Invalid engine configuration: {exc}\n")
     try:
-        if args.command in {"demo", "analyze"}:
-            data = demo_csv() if args.command == "demo" else (Path(args.suppliers).read_text(encoding="utf-8-sig"), Path(args.spend).read_text(encoding="utf-8-sig"))
-            state = engine.analyze(*data)
+        if args.command in {"demo", "analyze", "analyze-prepared"}:
+            if args.command == "analyze-prepared":
+                from .ingest import load_prepared
+                state = load_prepared(args.input_dir).analyze_with(engine,
+                    Path(".outcome/contracts")/uuid4().hex if args.require_dbt else None)
+            else:
+                data = demo_csv() if args.command == "demo" else (Path(args.suppliers).read_text(encoding="utf-8-sig"), Path(args.spend).read_text(encoding="utf-8-sig"))
+                state = engine.analyze(*data)
             output = Path(args.output)
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_text(engine.export_report(), encoding="utf-8")
@@ -155,6 +167,12 @@ def main():
             print(json.dumps(result,indent=2))
         elif args.command == "audit-export":
             Path(args.output).write_text(engine.export_audit(), encoding="utf-8")
+        elif args.command == "audit-verify":
+            checkpoint = json.loads(Path(args.checkpoint).read_text(encoding="utf-8")) if args.checkpoint else None
+            result = engine.verify_audit(checkpoint)
+            if args.output:
+                Path(args.output).write_text(json.dumps(result, indent=2), encoding="utf-8")
+            print(json.dumps(result, indent=2))
         elif args.command == "labels-export":
             Path(args.output).write_text(engine.export_labels(), encoding="utf-8")
         elif args.command == "review":

@@ -30,10 +30,12 @@ def make_server(engine: Engine, port: int = 8765, contract_workdir=None, rationa
         if contract_workdir:
             from .contracts import run_dbt_contracts
             normalized, contract = run_dbt_contracts(suppliers, spend, Path(contract_workdir)/uuid4().hex)
-            return engine.analyze(suppliers, spend, normalized, contract)
-        return engine.analyze(suppliers, spend)
+            engine.analyze(suppliers, spend, normalized, contract)
+        else:
+            engine.analyze(suppliers, spend)
+        return engine.state(review_limit=200, graph_limit=300)
     class Handler(BaseHTTPRequestHandler):
-        server_version = "OutcomeEngine/0.7"
+        server_version = "OutcomeEngine/0.8"
 
         def _host_ok(self):
             return self.headers.get("Host") in {f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}
@@ -110,8 +112,17 @@ def make_server(engine: Engine, port: int = 8765, contract_workdir=None, rationa
                 return self.respond(200, {"runs": runs})
             if path == "/api/audit-export":
                 return self.respond(200, engine.export_audit().encode("utf-8"), "application/x-ndjson; charset=utf-8")
+            if path == "/api/review-candidates":
+                try:
+                    params = parse_qs(urlsplit(self.path).query)
+                    limit, offset = int(params.get("limit", [200])[0]), int(params.get("offset", [0])[0])
+                    if not 1 <= limit <= 1000 or offset < 0:
+                        raise ValueError("limit must be 1..1000 and offset non-negative")
+                    return self.respond(200, engine.review_candidates(limit, offset))
+                except ValueError as exc:
+                    return self.respond(400, {"error": str(exc)})
             if path == "/api/state":
-                return self.respond(200, engine.state())
+                return self.respond(200, engine.state(review_limit=200, graph_limit=300))
             if path == "/api/portal":
                 return self.respond(200, engine.portal())
             if path == "/api/health":

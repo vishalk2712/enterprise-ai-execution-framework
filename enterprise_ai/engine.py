@@ -34,7 +34,7 @@ QUERY_WORDS = set("""what is the total totals spend spent net by currency curren
     suppliers supplier for of on from and or to in our we have has how much money did do does a an are
     this these those which highest top invoice invoices duplicate duplicates identity identities resolve
     resolved matched matching merge evidence amount amounts summary give tell list entity entities with
-    review candidate candidates find identify display explain i want can you record records""".split())
+    review candidate candidates find identify display explain i want can you record records vendor vendors""".split())
 # Recognize currency filters independently of whether that currency has rows.
 # Other uppercase three-letter codes are also accepted as explicit filters.
 CURRENCY_CODES = set("""AED AFN ALL AMD ANG AOA ARS AUD AWG AZN BAM BBD BDT BGN BHD BIF BMD BND BOB
@@ -172,13 +172,25 @@ class Engine:
         self.db.execute("""CREATE TABLE IF NOT EXISTS entity_rationales(
             snapshot TEXT NOT NULL,entity_id TEXT NOT NULL,model_key TEXT NOT NULL,payload TEXT NOT NULL,
             PRIMARY KEY(snapshot,entity_id,model_key))""")
+        from .audit_chain import migrate as migrate_chain
+        try:
+            migrate_chain(self.db, self.tenant_id)
+        except Exception:
+            self.db.close()
+            raise
         self.db.commit()
 
     def close(self):
         self.db.close()
 
     def _log(self, event: str, payload: dict):
-        self.db.execute("INSERT INTO audit(timestamp,event,payload) VALUES(?,?,?)", (now(), event, json.dumps(payload)))
+        from .audit_chain import append
+        append(self.db, now(), event, payload)
+
+    def verify_audit(self, checkpoint=None):
+        from .audit_chain import verify
+        with self.lock:
+            return verify(self.db, checkpoint)
 
     def _meta(self, key: str, default=None):
         row = self.db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
@@ -209,11 +221,15 @@ class Engine:
             row["country"] = row["country"].upper()
             if not re.fullmatch(r"[A-Z]{2}", row["country"]):
                 raise ValidationError(f"suppliers.csv:{row['_line']}: country must contain two letters.")
+            from .governance import degenerate_identifier
             for field in ("registration_id", "tax_id"):
                 supplied = row[field]
                 row[field] = identifier(supplied)
                 if supplied and not row[field]:
                     warnings.append(f"suppliers.csv:{row['_line']}: {field} missing-value placeholder ignored for matching.")
+                elif degenerate_identifier(row[field], self.match_config.min_authority_length):
+                    warnings.append(f"suppliers.csv:{row['_line']}: {field} {row[field]!r} is a placeholder or too short to be a registration; ignored for identity matching.")
+                    row[field] = ""
             from .governance import valid_lei
             for field in ("lei", "parent_lei"):
                 row[field] = identifier(row.get(field, ""))
@@ -255,6 +271,21 @@ class Engine:
             else:
                 unique[row["invoice_id"]] = row
         invoices = list(unique.values())
+        cap = self.match_config.max_authority_group
+        for field in ("registration_id", "lei"):
+            counts = defaultdict(list)
+            for row in suppliers:
+                if row[field]:
+                    counts[(row["country"], row[field])].append(row)
+            for (country, value), rows in sorted(counts.items()):
+                if len(rows) <= cap:
+                    continue
+                # A real registration ID is shared by a handful of source rows.
+                # Above the cap it is a reused value, so it cannot group anyone.
+                warnings.append(f"{field} {value!r} in {country} appears on {len(rows)} source records, above the {cap}-record limit; "
+                                f"treated as a reused value and ignored for identity matching. Verify it before merging.")
+                for row in rows:
+                    row[field] = ""
         entities, reviews, memberships = self._resolve(suppliers)
         evaluations, statistics = evaluate_records(suppliers, self.match_config)
         if self.pair_model is not None:
@@ -270,6 +301,10 @@ class Engine:
                 item["calibration_model_id"] = self.calibration["model_id"]
         if contract_manifest:
             statistics["upstream_contract"] = contract_manifest
+            adapter = contract_manifest.get("source_adapter", contract_manifest)
+            if adapter.get("version", "").startswith("source-adapter-"):
+                for table in ("suppliers", "spend"):
+                    warnings.extend(f"Source adapter ({table}): {note}" for note in adapter[table].get("notes", []))
         from .governance import annotate, VERSION as POLICY_VERSION
         annotate(evaluations, suppliers)
         statistics.update(dataset_namespace=self.dataset_namespace, governance_policy=POLICY_VERSION)
@@ -346,8 +381,9 @@ class Engine:
                 group = [s for s in by_id if root(s) in roots]
                 checked = validate_cluster([by_id[s] for s in group])
                 if not checked["valid"]:
-                    for left, right in zip(sorted(members), sorted(members)[1:]):
-                        conflicts.append((left, right, "Cluster consistency failed: " + ", ".join(checked["reasons"])))
+                    # Report the pair that actually failed, not adjacent members.
+                    conflicts.append((checked["left_id"], checked["right_id"],
+                                      "Cluster consistency failed: " + ", ".join(checked["reasons"])))
                     continue
                 representative = min(group)
                 for s in group:
@@ -443,10 +479,12 @@ class Engine:
 
     def export_audit(self):
         with self.lock:
+            checkpoint = self.verify_audit()
             lines = list(resolution_audit.export_history(self.db))
-            for table in ('actions', 'execution_jobs', 'dispatch_outbox', 'execution_dead_letters', 'execution_tombstones', 'maintenance_archives', 'entity_rationales', 'audit'):
+            for table in ('actions', 'execution_jobs', 'dispatch_outbox', 'execution_dead_letters', 'execution_tombstones', 'maintenance_archives', 'entity_rationales', 'audit', 'audit_chain'):
                 for row in self.db.execute(f'SELECT * FROM {table} ORDER BY rowid'):
                     lines.append(json.dumps({'table': table, **dict(row)}, ensure_ascii=False))
+            lines.append(json.dumps({'table': 'audit_checkpoint', **checkpoint}))
             return '\n'.join(lines) + '\n'
 
     def export_labels(self):
@@ -470,7 +508,23 @@ class Engine:
                 exported.append(json.dumps(item))
             return "\n".join(exported) + ("\n" if exported else "")
 
-    def state(self) -> dict:
+    def review_candidates(self, limit=200, offset=0):
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
+            raise ValidationError("limit must be 1..1000")
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ValidationError("offset must be non-negative")
+        with self.lock:
+            rows = self._meta("reviews", [])
+            return {"total": len(rows), "limit": limit, "offset": offset,
+                    "snapshot": self._meta("dataset", {}).get("snapshot"),
+                    "review_candidates": rows[offset:offset+limit]}
+
+    def state(self, review_limit=None, graph_limit=None) -> dict:
+        """review_limit/graph_limit bound the HTTP payload. None keeps the full
+        set for internal callers (query, export) that must see every row."""
+        for bound in (review_limit, graph_limit):
+            if bound is not None and (isinstance(bound, bool) or not isinstance(bound, int) or bound < 0):
+                raise ValidationError("State bounds must be non-negative integers or None")
         with self.lock:
             entities = self._records("entities")
             totals, grouped, counts, group_counts = defaultdict(Decimal), defaultdict(Decimal), defaultdict(int), defaultdict(int)
@@ -492,10 +546,20 @@ class Engine:
             names = {e["entity_id"]: e["display_name"] for e in entities}
             spend = [{"entity_id": entity, "name": names[entity], "currency": curr, "amount": f"{amount:.2f}", "invoice_count": group_counts[(entity, curr)]}
                      for (entity, curr), amount in sorted(grouped.items(), key=lambda x: (x[0][1], -x[1]))]
+            reviews = self._meta("reviews", [])
+            review_total, node_total, edge_total = len(reviews), len(nodes), len(edges)
+            if review_limit is not None:
+                reviews = reviews[:review_limit]
+            if graph_limit is not None:
+                nodes = nodes[:graph_limit]
+                shown = {n["id"] for n in nodes}
+                edges = [e for e in edges if e["source"] in shown and e["target"] in shown]
             return {"dataset": self._meta("dataset", {"supplier_count": 0, "invoice_count": 0, "currencies": [], "source_hashes": {}}),
                     "entities": entities, "totals": [{"currency": c, "amount": f"{v:.2f}", "invoice_count": counts[c]} for c, v in sorted(totals.items())],
-                    "supplier_spend": spend, "review_candidates": self._meta("reviews", []), "warnings": self._meta("warnings", []),
-                    "graph": {"nodes": nodes, "edges": edges}, "recent_actions": self._actions(),
+                    "supplier_spend": spend, "review_candidates": reviews, "review_candidate_total": review_total,
+                    "warnings": self._meta("warnings", []),
+                    "graph": {"nodes": nodes, "edges": edges, "node_total": node_total, "edge_total": edge_total},
+                    "recent_actions": self._actions(),
                     "execution_mode": ('api_mock_erp' if self.browser_erp.api_enabled else 'browser_mock_erp') if self.browser_erp else "local_mock_portal",
                     "worker_delivery": self.coordinator.identity()['delivery'] if self.coordinator else 'in_process',
                     "execution_target": self.browser_erp.binding() if self.browser_erp else None}
@@ -513,12 +577,23 @@ class Engine:
             suppliers, invoices = self._records("suppliers"), self._records("invoices")
             normalized_query = name_key(q)
             source_names = {s["supplier_id"]: name_key(s["name"]) for s in suppliers}
-            named, recognized = [], set()
+            named, recognized, ambiguous_skipped = [], set(), set()
             for entity in state["entities"]:
                 identifiers = [entity["entity_id"], *entity["source_supplier_ids"]]
                 id_hits = [s for s in identifiers if re.search(r"(?<![\w.-])" + re.escape(s.casefold()) + r"(?![\w.-])", q)]
-                name_hits = [source_names[s] for s in entity["source_supplier_ids"]
-                             if phrase_in(source_names[s], normalized_query)]
+                name_hits = []
+                for s in entity["source_supplier_ids"]:
+                    label = source_names[s]
+                    if not phrase_in(label, normalized_query):
+                        continue
+                    # A supplier literally named "Total" must not capture the
+                    # scope of "what is our total spend". A name built only
+                    # from query vocabulary needs an explicit scoping word.
+                    if all(part in QUERY_WORDS for part in label.split()) and not re.search(
+                            r"(?<!\w)(?:for|from|supplier|vendor|entity)\s+" + re.escape(label) + r"(?!\w)", normalized_query):
+                        ambiguous_skipped.add(label)
+                        continue
+                    name_hits.append(label)
                 if id_hits or name_hits:
                     named.append(entity)
                     recognized.update(name_key(s) for s in id_hits)
@@ -536,6 +611,10 @@ class Engine:
                                     and (word not in QUERY_WORDS or re.search(r"\b(?:in|currency|currencies)\s+" + re.escape(word) + r"\b", q))}
             unknown_terms = remaining - QUERY_WORDS - {c.casefold() for c in requested_currencies}
             unknowns = []
+            if ambiguous_skipped:
+                unknowns.append("These supplier names are also ordinary query words and did NOT narrow the scope: "
+                                + ", ".join(sorted(ambiguous_skipped))
+                                + ". Write 'for <name>' or use the source supplier ID to scope the answer to them.")
             if unknown_terms:
                 intent = "needs_review"
                 records = []

@@ -6,7 +6,30 @@ from .normalization import identifier
 
 REVIEW_FLOOR = .75
 AUTO_FLOOR = .99
-VERSION = "corporate-governance-v1"
+VERSION = "corporate-governance-v2"
+
+# Placeholders that survive identifier() because they are alphanumeric.
+PLACEHOLDER_IDS = {"TBC", "TBA", "PENDING", "SAME", "ASABOVE", "DUMMY", "TEMP",
+                   "TEST", "VARIOUS", "MISC", "SUNDRY", "ONEOFF", "NOTREG",
+                   "NOTREGISTERED", "NOREG", "NONREG", "REFER", "SEEABOVE"}
+
+
+def degenerate_identifier(value, min_length=0):
+    """True when an authority ID cannot carry legal identity on its own.
+
+    Covers placeholders operators type into mandatory fields: 0, 1, X, ----,
+    999999, TBC. These are not identity and must never drive an auto-merge.
+    min_length is a policy knob: 0 disables the length rule, 5 rejects any ID
+    shorter than the shortest real Companies House / VAT / LEI identifier.
+    """
+    value = identifier(value)
+    if not value:
+        return False
+    if value in PLACEHOLDER_IDS:
+        return True
+    if len(set(value)) == 1:
+        return True
+    return min_length > 0 and len(value) < min_length
 
 
 def valid_lei(value):
@@ -22,6 +45,9 @@ def conflicts(left, right):
         reasons.append("country_disagreement")
     for field in ("registration_id", "tax_id", "lei", "bank_account_hash"):
         a, b = identifier(left.get(field, "")), identifier(right.get(field, ""))
+        if field in {"registration_id", "tax_id"}:
+            a = "" if degenerate_identifier(a) else a
+            b = "" if degenerate_identifier(b) else b
         if a and b and a != b:
             reasons.append(field + "_disagreement")
     a, b = identifier(left.get("lei", "")), identifier(right.get("lei", ""))
@@ -33,7 +59,8 @@ def conflicts(left, right):
 def direct_identity(left, right):
     # Shared VAT groups, postal offices and accounts can span legal entities.
     return [field for field in ("registration_id", "lei")
-            if identifier(left.get(field, "")) and identifier(left.get(field, "")) == identifier(right.get(field, ""))]
+            if identifier(left.get(field, "")) and not degenerate_identifier(left.get(field, ""))
+            and identifier(left.get(field, "")) == identifier(right.get(field, ""))]
 
 
 def validate_cluster(records):

@@ -98,7 +98,8 @@ class LocalHTTPIntegrationTests(unittest.TestCase):
 
     def test_governance_evidence_endpoints_and_input_bounds(self):
         self.load_demo()
-        self.assertEqual(self.request('GET', '/api/health')[2]['version'], '0.4.0')
+        from enterprise_ai import __version__
+        self.assertEqual(self.request('GET', '/api/health')[2]['version'], __version__)
         status, _, graph = self.request('GET', '/api/graph?node_id=supplier:SUP-001&hops=2&limit=20')
         self.assertEqual(status, 200)
         self.assertLessEqual(len(graph['nodes']), 20)
@@ -111,6 +112,12 @@ class LocalHTTPIntegrationTests(unittest.TestCase):
         self.assertEqual(explanation['backend'], 'deterministic_evidence')
         self.assertFalse(explanation['model_used'])
         self.assertEqual(self.request('GET', '/api/explanation?evaluation_id=unknown')[0], 400)
+        entity = next(e for e in self.request('GET', '/api/state')[2]['entities'] if len(e['source_supplier_ids']) > 1)
+        status, _, rationale = self.request('GET', '/api/entity-rationale?entity_id='+entity['entity_id'])
+        self.assertEqual(status, 200)
+        self.assertIn('group pair checks', rationale['text'])
+        self.assertFalse(rationale['model_used'])
+        self.assertEqual(self.request('GET', '/api/entity-rationale?entity_id=unknown')[0], 400)
 
     def test_approval_and_execution_update_only_the_local_portal_once(self):
         state = self.load_demo()

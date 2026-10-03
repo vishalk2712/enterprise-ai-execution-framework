@@ -1,0 +1,16 @@
+# Optional local development broker; never expose this unauthenticated fixture remotely.
+services:
+  redis:
+    image: redis:7.2
+    command: [redis-server, --appendonly, 'yes', --appendfsync, everysec]
+    ports:
+      - '127.0.0.1:6379:6379'
+    volumes:
+      - outcome-redis:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+volumes:
+  outcome-redis:

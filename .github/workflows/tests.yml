@@ -3,6 +3,27 @@ on: [push, pull_request]
 permissions:
   contents: read
 jobs:
+  redis-execution:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7.2
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s tests -p test_distributed.py -v
+        env:
+          OUTCOME_TEST_REDIS: '1'
+          OUTCOME_REDIS_URL: redis://127.0.0.1:6379
   browser-execution:
     runs-on: ubuntu-latest
     steps:
@@ -16,6 +37,9 @@ jobs:
       - run: npm install --prefix .outcome/browser playwright@1.62.1
       - run: node .outcome/browser/node_modules/playwright/cli.js install --with-deps chromium
       - run: python -m unittest discover -s tests -p test_execution.py -v
+        env:
+          OUTCOME_TEST_BROWSER: '1'
+      - run: python -m unittest discover -s tests -p test_distributed.py -v
         env:
           OUTCOME_TEST_BROWSER: '1'
   test:

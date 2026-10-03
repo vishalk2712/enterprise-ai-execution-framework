@@ -39,17 +39,17 @@ def main():
     serve.add_argument('--erp-db', help='Separate persistent mock ERP database; never use the engine database')
     serve.add_argument('--api-erp', action='store_true', help='Use the API-native mock ERP and detached workers')
     serve.add_argument('--distributed', action='store_true', help='Detach browser workers; optional Redis Streams broker')
-    serve.add_argument('--worker-token-file', default='.outcome/worker.token', help='Local bootstrap credential for detached workers')
+    serve.add_argument('--worker-token-file', help='Local bootstrap credential; default is scoped to --tenant-id')
     serve.add_argument('--redis-url-env', default='OUTCOME_REDIS_URL', help='Environment variable containing redis/rediss URL; never put credentials in CLI arguments')
     serve.add_argument('--auth-config', help='Tenant identity JSON with password hashes; enables dashboard RBAC')
     serve.add_argument('--worker-token-ref', help='Read detached worker credential from configured vault; no file fallback')
     serve.add_argument('--erp-password-ref', help='Read mock ERP credential from configured vault')
     serve.add_argument('--max-attempts', type=int, default=3)
-    serve.add_argument('--archive-dir', default='.outcome/archives')
+    serve.add_argument('--archive-dir', help='Defaults to a directory beside the selected engine database')
     serve.add_argument('--retention-days', type=int, default=90)
     worker_cmd = sub.add_parser('worker', help='Run an independent API/DOM consumer; no access to engine SQLite')
     worker_cmd.add_argument('--coordinator', required=True)
-    worker_cmd.add_argument('--token-file', default='.outcome/worker.token')
+    worker_cmd.add_argument('--token-file', help='Defaults to the tenant-specific bootstrap credential')
     worker_cmd.add_argument('--token-ref', help='Read worker credential from configured vault; no file fallback')
     worker_cmd.add_argument('--redis-url-env', default='OUTCOME_REDIS_URL')
     worker_cmd.add_argument('--consumer', default='worker-1')
@@ -57,7 +57,7 @@ def main():
     identities = sub.add_parser('auth-init', help='Create tenant identities and private initial passwords without overwriting files')
     identities.add_argument('--output', default='.outcome/auth.json')
     maintenance = sub.add_parser('maintenance', help='Archive verified operational rows; retain approval and destination evidence')
-    maintenance.add_argument('--archive-dir', default='.outcome/archives')
+    maintenance.add_argument('--archive-dir', help='Defaults to a directory beside the selected engine database')
     maintenance.add_argument('--retention-days', type=int, default=90)
     maintenance.add_argument('--vacuum', action='store_true', help='Reclaim SQLite file space; stop the server and workers before running')
     audit = sub.add_parser("audit-export", help="Export immutable evaluations and separate review labels")
@@ -102,6 +102,8 @@ def main():
     try:
         from .security import validate_tenant
         validate_tenant(args.tenant_id)
+        default_token = '.outcome/'+('worker.token' if args.tenant_id=='local' else args.tenant_id+'-worker.token')
+        archive_dir = getattr(args,'archive_dir',None) or str(Path(args.db).with_name(Path(args.db).stem+'-archives'))
         from .secret_store import load_store
         store = load_store(args.vault_config) if args.vault_config else None
         def secret(reference):
@@ -117,7 +119,7 @@ def main():
         parser.exit(2,'Invalid tenant or vault configuration; secret values are never printed.\n')
     if args.command == 'worker':
         from .worker import run_worker
-        try: run_worker(args.coordinator, args.token_file, os.environ.get(args.redis_url_env), args.consumer, args.once,
+        try: run_worker(args.coordinator, args.token_file or default_token, os.environ.get(args.redis_url_env), args.consumer, args.once,
                         token=secret(args.token_ref) if args.token_ref else None, tenant=args.tenant_id)
         except KeyboardInterrupt: pass
         except (ValueError, OSError): parser.exit(2, 'Worker could not connect or verify completion; inspect configuration.\n')
@@ -143,7 +145,7 @@ def main():
             print(json.dumps({"dataset": state["dataset"], "totals": state["totals"], "warnings": state["warnings"], "report": str(output)}, indent=2))
         elif args.command=='maintenance':
             from .maintenance import compact
-            result = compact(engine,args.archive_dir,args.retention_days)
+            result = compact(engine,archive_dir,args.retention_days)
             if args.vacuum:
                 engine.db.execute('VACUUM')
                 result['vacuumed'] = True
@@ -217,7 +219,7 @@ def main():
                     if args.worker_token_ref:
                         worker_token = secret(args.worker_token_ref)
                     else:
-                        token_path = Path(args.worker_token_file)
+                        token_path = Path(args.worker_token_file or default_token)
                         token_path.parent.mkdir(parents=True, exist_ok=True)
                         if not token_path.exists():
                             descriptor = os.open(token_path, os.O_WRONLY|os.O_CREAT|os.O_EXCL, 0o600)
@@ -227,7 +229,7 @@ def main():
                     if os.environ.get(args.redis_url_env):
                         from .broker import RedisBroker
                         broker = RedisBroker(os.environ[args.redis_url_env], engine._meta('coordinator_id'))
-                    Coordinator(engine, worker_token, broker, args.max_attempts, args.archive_dir, args.retention_days)
+                    Coordinator(engine, worker_token, broker, args.max_attempts, archive_dir, args.retention_days)
                 else:
                     worker = BrowserWorker(engine)
             try:

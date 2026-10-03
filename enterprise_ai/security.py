@@ -44,6 +44,7 @@ class AccessControl:
         if not isinstance(config,dict) or config.get('tenant_id') != validate_tenant(tenant): raise ValueError('Identity configuration belongs to another tenant')
         self.tenant = tenant
         self.principals = {}
+        if not isinstance(config.get('principals'),list): raise ValueError('Principal list required')
         for entry in config.get('principals', []):
             if not isinstance(entry,dict) or not isinstance(entry.get('id'),str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', entry['id']) or entry['id'] in self.principals:
                 raise ValueError('Invalid or duplicate principal')
@@ -78,9 +79,9 @@ class AccessControl:
             return token
 
     def principal(self, cookie):
-        from http.cookies import SimpleCookie
+        from http.cookies import SimpleCookie,CookieError
         try: token = SimpleCookie(cookie or '')['outcome_session'].value
-        except (KeyError, ValueError): return None
+        except (KeyError, ValueError,CookieError): return None
         with self.lock:
             entry = self.sessions.get(token)
             if not entry or entry['expires']<=time.monotonic():
@@ -89,9 +90,9 @@ class AccessControl:
             return {k:entry[k] for k in ('id','roles','tenant_id')}
 
     def logout(self, cookie):
-        from http.cookies import SimpleCookie
+        from http.cookies import SimpleCookie,CookieError
         try: token = SimpleCookie(cookie or '')['outcome_session'].value
-        except (KeyError, ValueError): return
+        except (KeyError, ValueError,CookieError): return
         with self.lock: self.sessions.pop(token, None)
 
     @staticmethod

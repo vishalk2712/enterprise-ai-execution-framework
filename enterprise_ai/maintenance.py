@@ -13,10 +13,11 @@ def compact(engine, directory, retention_days=90, clock=None):
     cutoff = current-retention_days*86400
     with engine.lock:
         jobs = [dict(r) for r in engine.db.execute("SELECT * FROM execution_jobs WHERE state='verified' AND completed_at>0 AND completed_at<? ORDER BY completed_at LIMIT 200",(cutoff,))]
-        rows = []
+        rows,outboxes = [],{}
         for job in jobs:
             rows.append({'table':'execution_jobs',**job})
             outbox = engine.db.execute('SELECT * FROM dispatch_outbox WHERE action_id=?',(job['action_id'],)).fetchone()
+            outboxes[job['action_id']]=dict(outbox) if outbox else None
             if outbox: rows.append({'table':'dispatch_outbox',**dict(outbox)})
     if not jobs: return {'archived_jobs':0,'retention_days':retention_days}
     # File I/O is outside the coordinator lock. Never delete before durable export.
@@ -45,6 +46,8 @@ def compact(engine, directory, retention_days=90, clock=None):
             for job in jobs:
                 present = engine.db.execute('SELECT * FROM execution_jobs WHERE action_id=?',(job['action_id'],)).fetchone()
                 if not present or dict(present)!=job: continue
+                outbox=engine.db.execute('SELECT * FROM dispatch_outbox WHERE action_id=?',(job['action_id'],)).fetchone()
+                if (dict(outbox) if outbox else None)!=outboxes[job['action_id']]: continue
                 engine.db.execute('INSERT OR IGNORE INTO execution_tombstones VALUES(?,?,?,?,?)',
                                   (job['action_id'],job['intent_hash'],job['attempts'],digest,current))
                 engine.db.execute('DELETE FROM dispatch_outbox WHERE action_id=?',(job['action_id'],))

@@ -32,6 +32,8 @@ def migrate(db):
     if 'completed_at' not in {r[1] for r in db.execute('PRAGMA table_info(execution_jobs)')}:
         db.execute('ALTER TABLE execution_jobs ADD COLUMN completed_at REAL NOT NULL DEFAULT 0')
         db.execute("UPDATE execution_jobs SET completed_at=? WHERE state='verified'", (time.time(),))
+    db.execute('CREATE INDEX IF NOT EXISTS execution_retention ON execution_jobs(state,completed_at)')
+    db.execute('CREATE INDEX IF NOT EXISTS dead_letter_dispatch ON execution_dead_letters(resolution,published_at)')
 
 
 def queue(engine, action_id, retry=False):

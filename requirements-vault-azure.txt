@@ -1,0 +1,3 @@
+# Optional Azure SDK. HashiCorp KV v2 reads use the Python standard library.
+azure-identity==1.26.0
+azure-keyvault-secrets==4.11.2

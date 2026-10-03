@@ -6,7 +6,15 @@ The first working module of an enterprise data-to-outcome framework. Import supp
 
 The core runs on a laptop with Python 3.10+ and no extra packages, GPU, API key or cloud account. Browser execution optionally adds Node.js and Playwright. Factual summaries optionally use an already installed local Ollama model. Resolution remains governed by deterministic rules and the explicitly configured classifier; no newly trained LLM is bundled.
 
-## New in v0.6
+## New in v0.7
+
+**Bounded execution recovery** quarantines exhausted jobs after three grants, persists investigation evidence and sends reference-only Redis dead letters. **Operational retention** archives old verified queue/outbox rows before deleting them, preserving approvals and destination idempotency. **Clock-safe grants** use coordinator/destination-owned monotonic expiry; workers never interpret local-clock deadlines.
+
+Opt-in **dashboard RBAC** separates stewards, approvers and investigators, requires a different action author/approver, and protects data exports. Each tenant uses separate process/database/ERP credentials. **HashiCorp Vault / Azure Key Vault references** resolve credentials without file fallback; an optional vault-managed bank-linkage HMAC key pseudonymizes hashes at ingestion. These controls harden a local sandbox; they do not constitute a deployed shared SaaS or full-database encryption.
+
+Start with the [v0.7 access, recovery and vault guide](docs/security-v07.md), including protected-demo commands, migration rules and the tested boundaries. The original two-minute demo below remains explicitly unsecured and loopback-only.
+
+## Included from v0.6
 
 **API-native mock ERP execution** uses approved JSON, an idempotency key, source preconditions and an independently reloaded receipt. **Detached workers** consume through authenticated HTTP without opening the coordinator's SQLite file or holding its lock during network execution. Optional **Redis Streams** delivery adds consumer groups, pending-job recovery and a transactional outbox; messages contain job references only.
 
@@ -138,6 +146,7 @@ flowchart LR
 - `enterprise_ai/explanations.py`: factual summaries and optional local model fact plans.
 - `enterprise_ai/execution.py`, `browser_worker.mjs`, `mock_erp.py`: durable jobs, bounded DOM execution and a separate destination sandbox.
 - `enterprise_ai/api_adapter.py`, `distributed.py`, `worker.py`, `broker.py`: REST receipts, short coordinator transactions, detached HTTP workers and Redis Streams delivery.
+- `enterprise_ai/security.py`, `secret_store.py`, `runtime_clock.py`, `maintenance.py`: local roles, vault references, process-owned expiry and verified-job archival.
 - `enterprise_ai/static/`: accessible vanilla HTML, CSS and JavaScript; no CDN dependencies.
 - `examples/`: inspectable synthetic data; packaged copies live under `enterprise_ai/data/`.
 - `tests/`: acceptance, regression and HTTP checks using independently authored fixtures.
@@ -146,7 +155,7 @@ Data and action state persist in `.outcome/engine.sqlite` by default. Imports re
 
 ## Boundaries and next steps
 
-This server binds to `127.0.0.1`. It has no production user accounts, tenant isolation or deployment support. Queries remain deterministic; optional Ollama summaries send only bounded evidence facts to a local model and validate its selected fact IDs before rendering. The optional browser worker only controls the separate loopback mock ERP in a fresh profile. The mock login and approval demonstrate workflow state, not organizational access control or real financial transactions.
+This server binds to `127.0.0.1`. Opt-in local roles and separate tenant databases/ERP instances are tested; production SSO, shared multi-tenant deployment and real vendor authorization remain future work. Queries remain deterministic; optional Ollama summaries send only bounded evidence facts to a local model and validate its selected fact IDs before rendering. The browser worker controls the separate loopback mock ERP in a fresh profile. No adapter moves money or updates a real financial ledger.
 
 The commercial starting point is a **reviewed supplier-cleanup and spend handover** for procurement teams. First measure false merges, unresolved cases, analyst review time and report usefulness with consenting pilot users. Keep sensitive customer data out of the public repository; `local-data/`, `.outcome/`, secrets and databases are ignored.
 

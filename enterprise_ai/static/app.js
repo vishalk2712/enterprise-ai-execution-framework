@@ -95,9 +95,11 @@ function renderState(next) {
   renderReviews(loaded);
   renderActions();
   const browserMode = state.execution_mode === 'browser_mock_erp';
-  $('#execution-mode').textContent = browserMode ? 'Headless browser · mock ERP' : 'Local mock portal';
-  $('#execution-note').textContent = browserMode
-    ? 'Inspect the exact payload and destination, then approve. A browser worker signs in to the separate mock ERP, applies the approved supplier sync and verifies the saved receipt.'
+  const apiMode = state.execution_mode === 'api_mock_erp';
+  const detached = state.worker_delivery !== 'in_process';
+  $('#execution-mode').textContent = `${apiMode ? 'REST API · mock ERP' : browserMode ? 'Headless browser · mock ERP' : 'Local mock portal'}${(apiMode || browserMode) && detached ? (state.worker_delivery === 'redis_streams' ? ' · Redis workers' : ' · detached worker') : ''}`;
+  $('#execution-note').textContent = apiMode || browserMode
+    ? `Inspect the exact payload and destination, then approve. ${detached ? 'Start a separate worker to process the queue.' : 'The browser worker processes the queue.'} Completion requires a saved ERP receipt and destination verification.`
     : 'Stage a supplier, inspect its payload, approve it, then execute the local demonstration sync.';
   scheduleWorkerRefresh();
 }
@@ -323,8 +325,9 @@ function renderActions() {
     const description = element("div");
     const supplier = (state.entities || []).find((entity) => entity.entity_id === action.entity_id);
     const name = action.payload?.display_name || supplier?.display_name || action.entity_id;
-    const browserAction = action.target === 'browser_mock_erp';
-    description.append(element("p", "action-name", `Sync ${safeString(name)}`), element("p", "action-meta", `${browserAction ? 'Browser mock ERP' : 'Local mock portal'} · ${safeString(action.action_id)}`));
+    const browserAction = ['browser_mock_erp', 'api_mock_erp'].includes(action.target);
+    const apiAction = action.target === 'api_mock_erp';
+    description.append(element("p", "action-name", `Sync ${safeString(name)}`), element("p", "action-meta", `${apiAction ? 'REST API mock ERP' : browserAction ? 'Browser mock ERP' : 'Local mock portal'} · ${safeString(action.action_id)}`));
     if (browserAction) description.append(element('small', '', `${safeString(action.target_binding?.origin)} · instance ${safeString(action.target_binding?.instance_id)}`));
     if (action.execution) description.append(element('p', 'section-note', `Worker: ${action.execution.state} · attempts ${action.execution.attempts}${action.execution.error ? ' · ' + action.execution.error : ''}`));
     const buttons = element("div", "action-buttons");
@@ -332,12 +335,12 @@ function renderActions() {
     buttons.append(element("span", `pill ${status === "executed" ? "pill-teal" : "pill-amber"}`, status));
     if (status === "pending" || (status === "approved" && (!browserAction || action.execution?.state === 'failed'))) {
       const verb = status === "pending" ? "approve" : browserAction ? 'retry' : "execute";
-      const button = element("button", "button button-secondary", status === "pending" ? (browserAction ? 'Approve & run browser' : "Approve payload") : browserAction ? 'Retry browser verification' : "Execute locally");
+      const button = element("button", "button button-secondary", status === "pending" ? (browserAction ? 'Approve & queue sync' : "Approve payload") : browserAction ? 'Retry receipt verification' : "Execute locally");
       button.type = "button";
       button.addEventListener("click", () => busy(button, async () => {
         await api(`/api/actions/${encodeURIComponent(action.action_id)}/${verb}`, {});
         await refresh();
-        notify(browserAction ? 'Approved browser job queued. Completion requires a verified ERP receipt.' : verb === "approve" ? "Payload approved. Execute locally when ready." : "Supplier synced to the local mock portal.");
+        notify(browserAction ? 'Approved sync queued. Completion requires a verified ERP receipt.' : verb === "approve" ? "Payload approved. Execute locally when ready." : "Supplier synced to the local mock portal.");
       }));
       buttons.append(button);
     }

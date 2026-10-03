@@ -3,6 +3,31 @@ on: [push, pull_request]
 permissions:
   contents: read
 jobs:
+  vault-security:
+    runs-on: ubuntu-latest
+    services:
+      vault:
+        image: hashicorp/vault:1.21
+        env:
+          VAULT_DEV_ROOT_TOKEN_ID: synthetic-ci-only-token
+          VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+        ports:
+          - 8200:8200
+        options: >-
+          --cap-add IPC_LOCK
+          --health-cmd "vault status -address=http://127.0.0.1:8200"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s tests -p test_security.py -v
+        env:
+          OUTCOME_TEST_VAULT: '1'
+          OUTCOME_VAULT_TOKEN: synthetic-ci-only-token
   redis-execution:
     runs-on: ubuntu-latest
     services:
@@ -21,6 +46,10 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m unittest discover -s tests -p test_distributed.py -v
+        env:
+          OUTCOME_TEST_REDIS: '1'
+          OUTCOME_REDIS_URL: redis://127.0.0.1:6379
+      - run: python -m unittest discover -s tests -p test_hardening.py -v
         env:
           OUTCOME_TEST_REDIS: '1'
           OUTCOME_REDIS_URL: redis://127.0.0.1:6379

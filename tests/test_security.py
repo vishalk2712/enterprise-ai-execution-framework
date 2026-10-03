@@ -213,6 +213,7 @@ class VaultBoundaryTests(unittest.TestCase):
     def test_remote_plaintext_and_credential_urls_are_rejected(self):
         for url in ('http://vault.example','https://user:password@vault.example','https://vault.example/path','https://vault.example?token=x'):
             with self.assertRaises(ValueError): SecretStore({'provider':'hashicorp','url':url})
+        with self.assertRaises(ValueError): SecretStore({'provider':'azure','url':'https://untrusted.example'})
 
     def test_kv_read_failure_is_generic_without_file_fallback(self):
         store=SecretStore({'provider':'hashicorp','url':'http://127.0.0.1:8200','mount':'secret','token_env':'OUTCOME_TEST_TOKEN'})

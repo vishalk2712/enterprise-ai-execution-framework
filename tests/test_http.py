@@ -75,6 +75,30 @@ class LocalHTTPIntegrationTests(unittest.TestCase):
         self.assertTrue(answer["evidence"])
         self.assertIn("route", answer)
 
+    def test_bounded_state_and_review_paging_preserve_totals_and_all_candidates(self):
+        from test_placeholder_identity import suppliers, spend
+        data = suppliers([f'S-{i},Trading Company {i} Ltd,GB,SC{i:06d},,AB10 1CD' for i in range(40)])
+        invoices = spend([f'I-{i},S-{i%40},2026-01-01,10.00,GBP,Parts,synthetic' for i in range(400)])
+        status, _, imported = self.request('POST', '/api/analyze', {'suppliers_csv': data, 'spend_csv': invoices})
+        self.assertEqual(status, 200, imported)
+        self.assertLessEqual(len(imported['review_candidates']), 200)
+        self.assertLessEqual(len(imported['graph']['nodes']), 300)
+        status, _, bounded = self.request('GET', '/api/state')
+        full = self.engine.state()
+        self.assertEqual(bounded['totals'], full['totals'])
+        self.assertEqual(bounded['graph']['node_total'], len(full['graph']['nodes']))
+        total = bounded['review_candidate_total']
+        self.assertGreater(total, 200)
+        rows = []
+        for offset in range(0, total, 200):
+            status, _, page = self.request('GET', f'/api/review-candidates?limit=200&offset={offset}')
+            self.assertEqual(status, 200)
+            self.assertEqual(page['snapshot'], full['dataset']['snapshot'])
+            rows.extend(page['review_candidates'])
+        self.assertEqual(rows, full['review_candidates'])
+        for query in ('limit=0', 'offset=-1', 'limit=no', 'limit=1001'):
+            self.assertEqual(self.request('GET', '/api/review-candidates?'+query)[0], 400)
+
     def test_review_history_api_separates_labels_and_survives_import(self):
         self.load_demo()
         status, _, result = self.request('GET', '/api/evaluations?limit=1')

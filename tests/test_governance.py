@@ -30,14 +30,14 @@ class GovernanceTests(unittest.TestCase):
     def test_tax_groups_banks_parent_child_and_clique_bridges_do_not_merge(self):
         cases = [
             [corporate("A", tax_id="VAT"), corporate("B", tax_id="VAT")],
-            [corporate("A", registration_id="R", bank_account_hash="a"*64), corporate("B", registration_id="R", bank_account_hash="b"*64)],
-            [corporate("A", registration_id="R", lei="PARENT"), corporate("B", registration_id="R", lei="CHILD", parent_lei="PARENT")],
+            [corporate("A", registration_id="R1", bank_account_hash="a"*64), corporate("B", registration_id="R1", bank_account_hash="b"*64)],
+            [corporate("A", registration_id="R1", lei="PARENT"), corporate("B", registration_id="R1", lei="CHILD", parent_lei="PARENT")],
         ]
         for rows in cases:
             entities, _, _ = Engine._resolve(rows)
             self.assertEqual(len(entities), 2)
             self.assertFalse(validate_cluster(rows)["valid"])
-        rows = [corporate("A", registration_id="R", lei="L"), corporate("B", registration_id="R"), corporate("C", lei="L")]
+        rows = [corporate("A", registration_id="R1", lei="L1"), corporate("B", registration_id="R1"), corporate("C", lei="L1")]
         self.assertFalse(validate_cluster(rows)["valid"])
         entities, _, _ = Engine._resolve(rows)
         self.assertEqual({frozenset(e["source_supplier_ids"]) for e in entities}, {frozenset("AB"), frozenset("C")})
@@ -51,7 +51,7 @@ class GovernanceTests(unittest.TestCase):
         for probability, tier in ((.749999, "Separate_Diagnostic"), (.75, "Human_Review"), (.99, "Human_Review")):
             item["match_probability"] = probability
             self.assertEqual(operational_tier(item, left, right)["tier"], tier)
-        left["registration_id"] = right["registration_id"] = "R"
+        left["registration_id"] = right["registration_id"] = "R1"
         self.assertTrue(operational_tier(item, left, right)["auto_merge_eligible"])
         right["tax_id"], left["tax_id"] = "T2", "T1"
         self.assertEqual(operational_tier(item, left, right)["tier"], "Conflict_Review")

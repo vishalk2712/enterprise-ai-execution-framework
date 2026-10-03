@@ -53,7 +53,7 @@ class AccessTests(ExecutionFixture):
         return headers['Set-Cookie'].split(';')[0]
 
     def test_anonymous_cannot_read_data_exports_or_use_worker_credential_as_user(self):
-        for path in ('/api/state','/api/export','/api/audit-export','/api/portal','/api/evaluations','/api/investigations'):
+        for path in ('/api/state','/api/export','/api/audit-export','/api/portal','/api/evaluations','/api/investigations','/api/review-candidates'):
             self.assertEqual(self.request(path)[0],401,path)
             self.assertEqual(self.request(path,extra={'Authorization':'Bearer '+self.token})[0],401,path)
         self.assertEqual(self.request('/api/worker/claim',{},self.login('approver'))[0],403)

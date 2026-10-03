@@ -24,7 +24,7 @@ def make_server(engine: Engine, port: int = 8765, contract_workdir=None, rationa
             return engine.analyze(suppliers, spend, normalized, contract)
         return engine.analyze(suppliers, spend)
     class Handler(BaseHTTPRequestHandler):
-        server_version = "OutcomeEngine/0.5"
+        server_version = "OutcomeEngine/0.6"
 
         def _host_ok(self):
             return self.headers.get("Host") in {f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}
@@ -48,6 +48,10 @@ def make_server(engine: Engine, port: int = 8765, contract_workdir=None, rationa
             if not self._host_ok():
                 return self.respond(403, {"error": "This application only accepts loopback hostnames."})
             path = urlsplit(self.path).path
+            if path == '/api/worker/identity':
+                if not engine.coordinator or not engine.coordinator.authorized(self.headers.get('Authorization')):
+                    return self.respond(403, {'error': 'Worker authentication required'})
+                return self.respond(200, engine.coordinator.identity())
             if path in {"/api/graph", "/api/explanation", "/api/entity-rationale", "/api/feedback-summary"}:
                 try:
                     params = parse_qs(urlsplit(self.path).query)
@@ -77,8 +81,9 @@ def make_server(engine: Engine, port: int = 8765, contract_workdir=None, rationa
             if path == "/api/portal":
                 return self.respond(200, engine.portal())
             if path == "/api/health":
-                return self.respond(200, {"status": "ok", "mode": "local-governed", "version": "0.5.0", "rationale_model": rationale_model,
-                                           "browser_execution": engine.browser_erp is not None})
+                from . import __version__
+                return self.respond(200, {"status": "ok", "mode": "local-governed", "version": __version__, "rationale_model": rationale_model,
+                                           "browser_execution": engine.browser_erp is not None, 'detached_workers': engine.coordinator is not None})
             if path == "/api/export":
                 return self.respond(200, engine.export_report().encode("utf-8"), "text/markdown; charset=utf-8", True)
             assets = {"/": ("index.html", "text/html"), "/static/app.js": ("app.js", "text/javascript"), "/static/reviews.js": ("reviews.js", "text/javascript"), "/static/style.css": ("style.css", "text/css")}
@@ -106,6 +111,13 @@ def make_server(engine: Engine, port: int = 8765, contract_workdir=None, rationa
                 if not isinstance(data, dict):
                     raise ValidationError("JSON object required.")
                 path = urlsplit(self.path).path
+                if path.startswith('/api/worker/'):
+                    if not engine.coordinator or not engine.coordinator.authorized(self.headers.get('Authorization')):
+                        return self.respond(403, {'error': 'Worker authentication required'})
+                    if path == '/api/worker/claim': return self.respond(200, engine.coordinator.claim(data.get('reference')))
+                    if path == '/api/worker/complete': return self.respond(200, engine.coordinator.finish(data))
+                    if path == '/api/worker/fail': return self.respond(200, engine.coordinator.finish(data, failed=True))
+                    return self.respond(404, {'error': 'Unknown worker operation'})
                 if path == "/api/demo":
                     return self.respond(200, import_dataset(*demo_csv()))
                 if path == "/api/analyze":

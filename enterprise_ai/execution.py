@@ -38,6 +38,9 @@ def enqueue(engine, action):
     if existing and existing[0] != digest:
         raise ValueError("Approved action payload changed")
     engine.db.execute("INSERT OR IGNORE INTO execution_jobs(action_id,intent_hash,state) VALUES(?,?,'queued')", (action['action_id'], digest))
+    if engine.coordinator:
+        from .distributed import queue
+        queue(engine, action['action_id'])
 
 
 def job_state(engine, action_id):
@@ -52,11 +55,20 @@ def job_state(engine, action_id):
 def run_browser(action, erp):
     if action.get('target') != 'browser_mock_erp' or action.get('status') not in {'approved', 'executed'}:
         raise ValueError('Browser execution requires an approved sandbox action')
+    result = run_browser_grant(action, erp.password, erp.sign(action))
+    with erp.lock:
+        erp.verify(result['receipt'])
+        if erp.receipt(action['action_id']) != result['receipt']:
+            raise ValueError('Destination receipt is missing')
+    return result
+
+
+def run_browser_grant(action, password, signature):
     node = os.environ.get('OUTCOME_NODE') or shutil.which('node')
     if not node:
         raise ValueError("Node.js and Playwright are required for browser execution")
     # Expiring capability prevents a timed-out/orphan browser from writing later.
-    job = {"action": intent(action), "password": erp.password, "signature": erp.sign(action)}
+    job = {"action": intent(action), "password": password, "signature": signature}
     process = subprocess.run([node, str(Path(__file__).with_name('browser_worker.mjs'))], input=canonical(job),
                              capture_output=True, text=True, encoding='utf-8', timeout=45, shell=False)
     if process.returncode or len(process.stdout) > 65536:
@@ -68,10 +80,6 @@ def run_browser(action, erp):
                 'source_supplier_ids': sorted(action['payload']['source_supplier_ids']), 'payload_hash': fingerprint(action['payload']), 'status': 'verified'}
     if receipt != expected or result.get('adapter') != ADAPTER:
         raise ValueError("Browser returned an unexpected execution receipt")
-    with erp.lock:
-        erp.verify(receipt)
-        if erp.receipt(action['action_id']) != receipt:
-            raise ValueError("Destination receipt is missing")
     return result
 
 
@@ -83,6 +91,8 @@ def run_one(engine, browser=run_browser):
     No SQLite write is sent to the ERP by this consumer.
     """
     owner = uuid4().hex
+    if engine.coordinator:
+        raise ValueError('Detached mode requires an HTTP worker; in-process execution is disabled')
     action_id = None
     with engine.lock:
         engine.db.execute('BEGIN IMMEDIATE')
@@ -134,6 +144,10 @@ def retry(engine, action):
     if engine.browser_erp is None or action.get('target_binding') != engine.browser_erp.binding():
         raise ValueError('ERP target changed; fresh approval required')
     enqueue(engine, action)
+    if engine.coordinator:
+        from .distributed import queue
+        row = engine.db.execute('SELECT state FROM execution_jobs WHERE action_id=?', (action['action_id'],)).fetchone()
+        if row['state'] == 'failed': queue(engine, action['action_id'], retry=True)
     engine.db.execute("UPDATE execution_jobs SET state='queued',error=NULL WHERE action_id=? AND state='failed'", (action['action_id'],))
 
 

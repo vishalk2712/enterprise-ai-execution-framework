@@ -1,6 +1,7 @@
 """Run with python -m enterprise_ai; Python 3.10+ and no runtime packages."""
 import argparse
 import json
+import os
 from pathlib import Path
 from uuid import uuid4
 
@@ -33,6 +34,16 @@ def main():
     serve.add_argument('--browser-erp', action='store_true', help='Run a separate mock ERP and execute approved payloads using a headless DOM worker')
     serve.add_argument('--erp-port', type=int, default=8770)
     serve.add_argument('--erp-db', help='Separate persistent mock ERP database; never use the engine database')
+    serve.add_argument('--api-erp', action='store_true', help='Use the API-native mock ERP and detached workers')
+    serve.add_argument('--distributed', action='store_true', help='Detach browser workers; optional Redis Streams broker')
+    serve.add_argument('--worker-token-file', default='.outcome/worker.token', help='Local bootstrap credential for detached workers')
+    serve.add_argument('--redis-url-env', default='OUTCOME_REDIS_URL', help='Environment variable containing redis/rediss URL; never put credentials in CLI arguments')
+    worker_cmd = sub.add_parser('worker', help='Run an independent API/DOM consumer; no access to engine SQLite')
+    worker_cmd.add_argument('--coordinator', required=True)
+    worker_cmd.add_argument('--token-file', default='.outcome/worker.token')
+    worker_cmd.add_argument('--redis-url-env', default='OUTCOME_REDIS_URL')
+    worker_cmd.add_argument('--consumer', default='worker-1')
+    worker_cmd.add_argument('--once', action='store_true')
     audit = sub.add_parser("audit-export", help="Export immutable evaluations and separate review labels")
     audit.add_argument("--output", required=True)
     labels = sub.add_parser("labels-export", help="Export latest definite labels for explicit grouping and split assignment")
@@ -72,6 +83,12 @@ def main():
     explanation.add_argument("evaluation_id")
     explanation.add_argument("--ollama-model", help="Optional already installed model; fixed local endpoint")
     args = parser.parse_args()
+    if args.command == 'worker':
+        from .worker import run_worker
+        try: run_worker(args.coordinator, args.token_file, os.environ.get(args.redis_url_env), args.consumer, args.once)
+        except KeyboardInterrupt: pass
+        except (ValueError, OSError): parser.exit(2, 'Worker could not connect or verify completion; inspect configuration.\n')
+        return
     from .matching import MatchConfig
     try:
         config = MatchConfig(**json.loads(Path(args.match_config).read_text())) if args.match_config else MatchConfig()
@@ -122,6 +139,10 @@ def main():
         elif args.command == "query":
             print(json.dumps(engine.query(args.question, args.budget_tokens), indent=2, ensure_ascii=False))
         elif args.command == "serve":
+            if args.api_erp and args.browser_erp:
+                raise ValueError('Choose API or browser ERP mode, not both')
+            if args.distributed and not (args.api_erp or args.browser_erp):
+                raise ValueError('Detached workers require an ERP adapter')
             if args.demo:
                 if args.require_dbt:
                     from .contracts import run_dbt_contracts
@@ -130,7 +151,7 @@ def main():
                 else:
                     engine.analyze(*demo_csv())
             erp_server = worker = None
-            if args.browser_erp:
+            if args.browser_erp or args.api_erp:
                 import threading
                 from .mock_erp import MockERP, make_erp_server
                 from .execution import BrowserWorker
@@ -140,9 +161,23 @@ def main():
                 erp_path = Path(args.erp_db) if args.erp_db else Path(args.db).with_name(Path(args.db).stem+'-mock-erp.sqlite')
                 if erp_path.resolve() == Path(args.db).resolve():
                     raise ValueError('The mock ERP must use a separate database')
-                engine.browser_erp = MockERP(erp_path, records)
+                engine.browser_erp = MockERP(erp_path, records, api_enabled=args.api_erp)
                 erp_server = make_erp_server(engine.browser_erp, args.erp_port)
-                worker = BrowserWorker(engine)
+                if args.api_erp or args.distributed:
+                    import secrets
+                    from .distributed import Coordinator
+                    token_path = Path(args.worker_token_file)
+                    token_path.parent.mkdir(parents=True, exist_ok=True)
+                    if not token_path.exists():
+                        descriptor = os.open(token_path, os.O_WRONLY|os.O_CREAT|os.O_EXCL, 0o600)
+                        with os.fdopen(descriptor, 'w') as handle: handle.write(secrets.token_urlsafe(32))
+                    broker = None
+                    if os.environ.get(args.redis_url_env):
+                        from .broker import RedisBroker
+                        broker = RedisBroker(os.environ[args.redis_url_env], engine._meta('coordinator_id'))
+                    Coordinator(engine, token_path.read_text().strip(), broker)
+                else:
+                    worker = BrowserWorker(engine)
             try:
                 server = make_server(engine, args.port, ".outcome/contracts" if args.require_dbt else None, args.rationale_model)
             except OSError:
@@ -150,14 +185,16 @@ def main():
                     erp_server.server_close()
                     engine.browser_erp.close()
                 raise
-            if worker:
+            if erp_server:
                 threading.Thread(target=erp_server.serve_forever, daemon=True).start()
-                worker.start()
             print(f"Outcome Engine: http://127.0.0.1:{server.server_port}", flush=True)
             print("Local demo only. Ctrl+C to stop. Data stays in your configured SQLite file.", flush=True)
             if engine.browser_erp:
-                print(f'Mock ERP: {engine.browser_erp.origin} (separate sandbox database). Approval queues the browser worker.', flush=True)
+                print(f'Mock ERP: {engine.browser_erp.origin} (separate sandbox database). Approval queues the configured worker.', flush=True)
+                if engine.coordinator: print('Detached execution enabled. Start python -m enterprise_ai worker with this coordinator URL and worker token file.', flush=True)
             try:
+                if engine.coordinator: engine.coordinator.start()
+                if worker: worker.start()
                 server.serve_forever()
             except KeyboardInterrupt:
                 pass
@@ -165,6 +202,8 @@ def main():
                 server.server_close()
                 if worker:
                     worker.close()
+                if engine.coordinator: engine.coordinator.close()
+                if erp_server:
                     erp_server.shutdown()
                     erp_server.server_close()
                     engine.browser_erp.close()

@@ -1,6 +1,7 @@
 """Separate, loopback-only ERP sandbox with HTML forms and idempotent receipts.
 
-The worker must use the UI. There is deliberately no HTTP mutation API.
+HTML execution is the default. The opt-in REST sandbox uses the same approved
+intent checks, atomic destination commit and independently verified receipt.
 """
 import hashlib
 import hmac
@@ -10,6 +11,7 @@ import secrets
 import sqlite3
 import threading
 import time
+from contextlib import nullcontext
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -36,7 +38,9 @@ def intent(action):
 
 
 class MockERP:
-    def __init__(self, db_path, records):
+    def __init__(self, db_path, records, api_enabled=False):
+        self.api_enabled = api_enabled
+        self.authorization_guard = lambda action, signature: nullcontext()
         if str(db_path) != ":memory:":
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(str(db_path), check_same_thread=False)
@@ -63,12 +67,13 @@ class MockERP:
         self.origin = None
 
     def binding(self):
-        return {"origin": self.origin, "instance_id": self.instance_id, "adapter": ADAPTER}
+        return {"origin": self.origin, "instance_id": self.instance_id, "adapter": 'mock-erp-rest-v1' if self.api_enabled else ADAPTER}
 
-    def sign(self, action, expires_at=None):
+    def sign(self, action, expires_at=None, lease=None):
         deadline = str(int(time.time()+40) if expires_at is None else int(expires_at))
-        message = canonical(intent(action)) + ':' + deadline
-        return deadline + ':' + hmac.new(self.secret, message.encode(), hashlib.sha256).hexdigest()
+        prefix = deadline + (':'+lease if lease else '')
+        message = canonical(intent(action)) + ':' + prefix
+        return prefix + ':' + hmac.new(self.secret, message.encode(), hashlib.sha256).hexdigest()
 
     def receipt(self, action_id):
         with self.lock:
@@ -78,8 +83,11 @@ class MockERP:
     def apply(self, action, signature):
         if not isinstance(signature, str) or ':' not in signature:
             raise ValueError("This form has no valid approved execution capability")
-        deadline = int(signature.split(':', 1)[0])
-        if deadline < time.time() or deadline > time.time()+45 or not hmac.compare_digest(self.sign(action, deadline), signature):
+        parts = signature.split(':')
+        if len(parts) not in (2, 3): raise ValueError('Invalid capability format')
+        deadline = int(parts[0])
+        lease = parts[1] if len(parts) == 3 else None
+        if deadline < time.time() or deadline > time.time()+45 or not hmac.compare_digest(self.sign(action, deadline, lease), signature):
             raise ValueError("This form has no valid approved execution capability")
         if action["target_binding"] != self.binding() or action["operation"] != "sync_supplier":
             raise ValueError("ERP instance or operation changed; approve a fresh action")
@@ -92,7 +100,7 @@ class MockERP:
         if not validate_cluster(records)["valid"]:
             raise ValueError("ERP refused inconsistent legal identity evidence")
         digest = fingerprint(intent(action))
-        with self.lock, self.db:
+        with self.authorization_guard(action, signature), self.lock, self.db:
             if deadline < time.time():
                 raise ValueError('Execution capability expired before destination write')
             old = self.receipt(action["action_id"])
@@ -135,6 +143,34 @@ class MockERP:
 def make_erp_server(erp, port=8770):
     esc = lambda s: html.escape(str(s), quote=True)
     class Handler(BaseHTTPRequestHandler):
+        def json_response(self, status, data):
+            body = json.dumps(data).encode()
+            self.send_response(status)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_PUT(self):
+            if not erp.api_enabled or urlsplit(self.path).path != '/api/supplier-sync':
+                return self.json_response(404, {'error': 'API adapter disabled or unknown operation'})
+            if not self.host_ok() or self.headers.get('Origin') not in (None, erp.origin) or self.headers.get('Sec-Fetch-Site') == 'cross-site':
+                return self.json_response(403, {'error': 'Origin refused'})
+            try:
+                length = int(self.headers.get('Content-Length', '0'))
+                if not 0 < length <= 100000 or self.headers.get_content_type() != 'application/json':
+                    raise ValueError('Bounded JSON request required')
+                action = json.loads(self.rfile.read(length))
+                if self.headers.get('Idempotency-Key') != action['action_id'] or self.headers.get('If-Match') != '"'+fingerprint(action['source_records'])+'"':
+                    raise ValueError('Idempotency or source precondition missing')
+                auth = self.headers.get('Authorization', '')
+                if not auth.startswith('Bearer '):
+                    return self.json_response(403, {'error': 'Approved execution capability required'})
+                receipt = erp.apply(action, auth[7:])
+                return self.json_response(200, receipt)
+            except (ValueError, KeyError, TypeError):
+                self.json_response(409, {'error': 'Approved intent, lease or destination precondition failed'})
         def respond(self, status, content, redirect=None):
             body = content.encode()
             self.send_response(status)
@@ -166,6 +202,15 @@ def make_erp_server(erp, port=8770):
             if not self.host_ok():
                 return self.respond(403, "Loopback host required")
             path = urlsplit(self.path).path
+            if erp.api_enabled and path.startswith('/api/receipts/'):
+                if not secrets.compare_digest(self.headers.get('Authorization', ''), 'Bearer '+erp.password):
+                    return self.json_response(403, {'error': 'ERP read credential required'})
+                with erp.lock:
+                    receipt = erp.receipt(path.removeprefix('/api/receipts/'))
+                    if not receipt: return self.json_response(404, {'error': 'Receipt not found'})
+                    try: erp.verify(receipt)
+                    except ValueError: return self.json_response(409, {'error': 'ERP postcondition changed'})
+                return self.json_response(200, receipt)
             session = self.session()
             if path == "/" or path == "/login":
                 return self.respond(200, self.page('<h2>Operator sign in</h2><form method="post" action="/login"><label>Username<input name="username" aria-label="Username" autocomplete="off"></label><label>Password<input name="password" type="password" aria-label="Password" autocomplete="off"></label><button type="submit">Sign in</button></form>'))

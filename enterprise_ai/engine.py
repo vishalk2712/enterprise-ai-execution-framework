@@ -109,6 +109,7 @@ class Engine:
             raise ValueError("dataset_namespace must be 1..80 letters, digits, underscores or hyphens")
         self.dataset_namespace = dataset_namespace
         self.browser_erp = None
+        self.coordinator = None
         self.match_config = match_config or MatchConfig()
         self.calibration = calibration
         self.pair_model = pair_model
@@ -146,6 +147,9 @@ class Engine:
         knowledge_graph.migrate(self.db)
         from .execution import migrate
         migrate(self.db)
+        from .distributed import migrate as migrate_distributed
+        migrate_distributed(self.db)
+        self.db.execute("INSERT OR IGNORE INTO metadata VALUES('coordinator_id',?)", (json.dumps(uuid4().hex),))
         self.db.execute("""CREATE TABLE IF NOT EXISTS entity_rationales(
             snapshot TEXT NOT NULL,entity_id TEXT NOT NULL,model_key TEXT NOT NULL,payload TEXT NOT NULL,
             PRIMARY KEY(snapshot,entity_id,model_key))""")
@@ -414,7 +418,7 @@ class Engine:
     def export_audit(self):
         with self.lock:
             lines = list(resolution_audit.export_history(self.db))
-            for table in ('actions', 'execution_jobs', 'entity_rationales', 'audit'):
+            for table in ('actions', 'execution_jobs', 'dispatch_outbox', 'entity_rationales', 'audit'):
                 for row in self.db.execute(f'SELECT * FROM {table} ORDER BY rowid'):
                     lines.append(json.dumps({'table': table, **dict(row)}, ensure_ascii=False))
             return '\n'.join(lines) + '\n'
@@ -466,7 +470,8 @@ class Engine:
                     "entities": entities, "totals": [{"currency": c, "amount": f"{v:.2f}", "invoice_count": counts[c]} for c, v in sorted(totals.items())],
                     "supplier_spend": spend, "review_candidates": self._meta("reviews", []), "warnings": self._meta("warnings", []),
                     "graph": {"nodes": nodes, "edges": edges}, "recent_actions": self._actions(),
-                    "execution_mode": "browser_mock_erp" if self.browser_erp else "local_mock_portal",
+                    "execution_mode": ('api_mock_erp' if self.browser_erp.api_enabled else 'browser_mock_erp') if self.browser_erp else "local_mock_portal",
+                    "worker_delivery": self.coordinator.identity()['delivery'] if self.coordinator else 'in_process',
                     "execution_target": self.browser_erp.binding() if self.browser_erp else None}
 
     def query(self, question: str, budget_tokens: int = 2048) -> dict:
@@ -587,13 +592,13 @@ class Engine:
             raise ValidationError("Action not found.")
         data = json.loads(row["payload"])
         data.update(action_id=row["action_id"], status=row["status"], snapshot=row["snapshot"])
-        if data.get('target') == 'browser_mock_erp':
+        if data.get('target') in {'browser_mock_erp', 'api_mock_erp'}:
             from .execution import job_state
             data['execution'] = job_state(self, action_id)
         return data
 
     def _portal_matches(self, action: dict) -> bool:
-        if action.get('target') == 'browser_mock_erp':
+        if action.get('target') in {'browser_mock_erp', 'api_mock_erp'}:
             if self.browser_erp is None or action.get('target_binding') != self.browser_erp.binding():
                 return False
             try:
@@ -640,7 +645,7 @@ class Engine:
                        "evidence": [evidence(json.loads(r[0])) for r in self.db.execute("SELECT payload FROM suppliers WHERE entity_id=?", (entity_id,))]}
             if self.browser_erp:
                 from .execution import stage_payload
-                payload.update(stage_payload(self, entity), target='browser_mock_erp')
+                payload.update(stage_payload(self, entity), target='api_mock_erp' if self.browser_erp.api_enabled else 'browser_mock_erp')
             self.db.execute("INSERT INTO actions VALUES(?,?,?,?)", (action_id, snapshot, "pending", json.dumps(payload)))
             self._log("action_staged", {"action_id": action_id, "target": payload['target']})
             return self._action(action_id)
@@ -651,11 +656,11 @@ class Engine:
             if action["snapshot"] != self._meta("dataset", {}).get("snapshot") or action["status"] == "stale":
                 raise ValidationError("Stale action; stage a new action from the current dataset.")
             if action["status"] == "pending":
-                if action.get('target') == 'browser_mock_erp' and (self.browser_erp is None or action.get('target_binding') != self.browser_erp.binding()):
+                if action.get('target') in {'browser_mock_erp', 'api_mock_erp'} and (self.browser_erp is None or action.get('target_binding') != self.browser_erp.binding()):
                     raise ValidationError('ERP target changed; stage a fresh action before approval')
                 self.db.execute("UPDATE actions SET status='approved' WHERE action_id=?", (action_id,))
                 self._log("action_approved", {"action_id": action_id, "actor": "local_operator"})
-                if action.get('target') == 'browser_mock_erp':
+                if action.get('target') in {'browser_mock_erp', 'api_mock_erp'}:
                     from .execution import enqueue
                     enqueue(self, self._action(action_id))
             return self._action(action_id)
@@ -664,7 +669,7 @@ class Engine:
         from .execution import retry
         with self.lock, self.db:
             action = self._action(action_id)
-            if action.get('target') != 'browser_mock_erp':
+            if action.get('target') not in {'browser_mock_erp', 'api_mock_erp'}:
                 raise ValidationError('This action does not target the browser ERP')
             retry(self, action)
             self._log('browser_retry_requested', {'action_id': action_id})
@@ -673,7 +678,7 @@ class Engine:
     def execute_action(self, action_id: str) -> dict:
         with self.lock, self.db:
             action = self._action(action_id)
-            if action.get('target') == 'browser_mock_erp':
+            if action.get('target') in {'browser_mock_erp', 'api_mock_erp'}:
                 raise ValidationError('Browser actions execute through the approved worker queue; use retry after a failure')
             if action["snapshot"] != self._meta("dataset", {}).get("snapshot"):
                 raise ValidationError("Stale action; the dataset changed after this action was staged.")

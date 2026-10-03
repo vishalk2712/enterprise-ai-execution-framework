@@ -204,7 +204,8 @@ class DistributedTests(ExecutionFixture):
         with ThreadPoolExecutor(2) as pool:
             results = list(pool.map(lambda _: subprocess.run(command, capture_output=True, text=True, timeout=25, env=env), range(2)))
         for result in results:
-            self.assertEqual(result.returncode, 0, result.stderr)
+            jobs=[(r['state'],r['attempts']) for r in self.engine.db.execute('SELECT state,attempts FROM execution_jobs')]
+            self.assertEqual(result.returncode, 0, result.stderr+' Queue states/attempts: '+str(jobs))
             self.assertEqual(json.loads(result.stdout)['state'], 'verified')
         self.assertEqual(self.erp.db.execute('SELECT COUNT(*) FROM receipts').fetchone()[0], 2)
 

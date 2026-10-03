@@ -94,6 +94,12 @@ function renderState(next) {
   renderGraph();
   renderReviews(loaded);
   renderActions();
+  const browserMode = state.execution_mode === 'browser_mock_erp';
+  $('#execution-mode').textContent = browserMode ? 'Headless browser · mock ERP' : 'Local mock portal';
+  $('#execution-note').textContent = browserMode
+    ? 'Inspect the exact payload and destination, then approve. A browser worker signs in to the separate mock ERP, applies the approved supplier sync and verifies the saved receipt.'
+    : 'Stage a supplier, inspect its payload, approve it, then execute the local demonstration sync.';
+  scheduleWorkerRefresh();
 }
 
 function renderEntities() {
@@ -119,6 +125,22 @@ function renderEntities() {
       (entity.tax_ids || []).length ? `Tax: ${safeString(entity.tax_ids)}` : "",
     ].filter(Boolean).join(" · ");
     if (identifiers) basis.title = identifiers;
+    const rationale = element('details', 'payload-details');
+    rationale.append(element('summary', '', 'Explain this group'));
+    const explanation = element('p', 'section-note', 'Open to load the recorded decision rationale.');
+    rationale.append(explanation);
+    rationale.addEventListener('toggle', async () => {
+      if (!rationale.open || rationale.dataset.loaded) return;
+      rationale.dataset.loaded = 'true';
+      explanation.textContent = 'Reading recorded evidence…';
+      try {
+        const result = await api('/api/entity-rationale?entity_id=' + encodeURIComponent(entity.entity_id));
+        if (result.snapshot !== state.dataset?.snapshot) throw new Error('Dataset changed; reopen the group from the current register.');
+        explanation.textContent = result.text;
+        rationale.append(element('small', '', result.model_used ? `Local model fact plan: ${result.model}` : (result.fallback || 'Recorded evidence summary')));
+      } catch (error) { explanation.textContent = error.message; delete rationale.dataset.loaded; }
+    });
+    basis.append(rationale);
     const action = element("td");
     const button = element("button", "stage-button", "Stage sync ↗");
     button.type = "button";
@@ -301,28 +323,39 @@ function renderActions() {
     const description = element("div");
     const supplier = (state.entities || []).find((entity) => entity.entity_id === action.entity_id);
     const name = action.payload?.display_name || supplier?.display_name || action.entity_id;
-    description.append(element("p", "action-name", `Sync ${safeString(name)}`), element("p", "action-meta", `Local mock portal · ${safeString(action.action_id)}`));
+    const browserAction = action.target === 'browser_mock_erp';
+    description.append(element("p", "action-name", `Sync ${safeString(name)}`), element("p", "action-meta", `${browserAction ? 'Browser mock ERP' : 'Local mock portal'} · ${safeString(action.action_id)}`));
+    if (browserAction) description.append(element('small', '', `${safeString(action.target_binding?.origin)} · instance ${safeString(action.target_binding?.instance_id)}`));
+    if (action.execution) description.append(element('p', 'section-note', `Worker: ${action.execution.state} · attempts ${action.execution.attempts}${action.execution.error ? ' · ' + action.execution.error : ''}`));
     const buttons = element("div", "action-buttons");
     const status = safeString(action.status);
     buttons.append(element("span", `pill ${status === "executed" ? "pill-teal" : "pill-amber"}`, status));
-    if (status === "pending" || status === "approved") {
-      const verb = status === "pending" ? "approve" : "execute";
-      const button = element("button", "button button-secondary", status === "pending" ? "Approve payload" : "Execute locally");
+    if (status === "pending" || (status === "approved" && (!browserAction || action.execution?.state === 'failed'))) {
+      const verb = status === "pending" ? "approve" : browserAction ? 'retry' : "execute";
+      const button = element("button", "button button-secondary", status === "pending" ? (browserAction ? 'Approve & run browser' : "Approve payload") : browserAction ? 'Retry browser verification' : "Execute locally");
       button.type = "button";
       button.addEventListener("click", () => busy(button, async () => {
         await api(`/api/actions/${encodeURIComponent(action.action_id)}/${verb}`, {});
         await refresh();
-        notify(verb === "approve" ? "Payload approved. Execute locally when ready." : "Supplier synced to the local mock portal.");
+        notify(browserAction ? 'Approved browser job queued. Completion requires a verified ERP receipt.' : verb === "approve" ? "Payload approved. Execute locally when ready." : "Supplier synced to the local mock portal.");
       }));
       buttons.append(button);
     }
     header.append(description, buttons);
     const details = element("details", "payload-details");
     details.append(element("summary", "", "Inspect payload and evidence"), element("pre", "", JSON.stringify(action.payload || {}, null, 2)));
+    if (browserAction) details.append(element('pre', '', JSON.stringify({ destination: action.target_binding, snapshot: action.snapshot, source_records: action.source_records, receipt: action.execution?.receipt }, null, 2)));
     if ((action.evidence || []).length) details.append(evidenceList(action.evidence));
     card.append(header, details);
     host.append(card);
   }
+}
+
+let workerRefreshTimer;
+function scheduleWorkerRefresh() {
+  window.clearTimeout(workerRefreshTimer);
+  if (!(state.recent_actions || []).some(a => ['queued', 'running'].includes(a.execution?.state))) return;
+  workerRefreshTimer = window.setTimeout(() => refresh().catch(error => notify(error.message, true)), 1500);
 }
 
 async function refreshPortal() {

@@ -6,7 +6,13 @@ The first working module of an enterprise data-to-outcome framework. Import supp
 
 The core runs on a laptop with Python 3.10+ and no extra packages, GPU, API key or cloud account. Browser execution optionally adds Node.js and Playwright. Factual summaries optionally use an already installed local Ollama model. Resolution remains governed by deterministic rules and the explicitly configured classifier; no newly trained LLM is bundled.
 
-## New in v0.9
+## New in v0.10
+
+Opt-in **graph discovery** adds bounded address and asserted ownership paths to candidate retrieval, with inspectable evidence and no community-based identity merges. On the frozen v0.9 reference cohort it recovered two additional matches: end-to-end reference recall rose from **80.61% to 81.82%**, with **97.83% reference precision**. These weak-label results are an ablation, not independently verified customer accuracy.
+
+The **read-only Investigator** monitors accepted imports and recent operational audit events for monthly positive-outflow spikes, temporal bank-link changes and repeated execution failures. Snapshot-bound dossiers appear only to Investigators in protected workspaces. Missing history is disclosed, currencies and credits remain separate, and detectors cannot merge, label, approve or execute. Read the [v0.10 intelligence guide](docs/intelligence-v10.md) for bounds, evidence, commands and limitations.
+
+## Included from v0.9
 
 The first real-data cohort contains **2,772 March 2025 payment lines and 483 source supplier observations** from the Cabinet Office, HMRC and HM Treasury. Source totals reconcile exactly to **GBP 645,400,617.52**. Repeated transaction references and negative payments are preserved. These are thresholded published payments with unknown tax basis, not net invoices or contract award values.
 

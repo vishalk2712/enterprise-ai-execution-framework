@@ -1,0 +1,160 @@
+{
+  "experiment": "contracts-finder-weak-label-v1",
+  "source": "https://data.open-contracting.org/en/publication/128",
+  "license_url": "https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/",
+  "attribution": "Contains public sector information licensed under the Open Government Licence v3.0.",
+  "source_counts": {
+    "compiled_processes": 46122,
+    "ambiguous_party_ids": 0,
+    "coh_observations": 17501,
+    "non_coh_observations": 35253,
+    "invalid_coh_observations": 2544,
+    "invalid_name_observations": 1,
+    "name_collision_groups_excluded": 240,
+    "oversized_variant_groups_excluded": 0,
+    "usable_companies": 7205,
+    "name_variation_groups": 498,
+    "usable_observations": 7834
+  },
+  "input_sha256": "0b207365a72e01db2f123c6b7cff1749f95f756ec31f271a5373146e2864aec0",
+  "model_id": "61c3fc29844cdf4c14a138ecae4a46131b073282df68e1f48c5f4c9fa39771ac",
+  "matching_config": {
+    "version": "indexed-governance-v5",
+    "normalization_version": "unicode-legal-suffix-v2",
+    "ngram_size": 3,
+    "min_shared_grams": 2,
+    "max_posting": 150,
+    "max_candidates_per_record": 40,
+    "max_evaluations": 50000,
+    "max_feature_chars": 256,
+    "review_threshold": 0.88,
+    "near_miss_floor": 0.8,
+    "excluded_tax_sample_size": 100,
+    "random_seed": 1729,
+    "name_weight": 0.7,
+    "address_weight": 0.2,
+    "postcode_weight": 0.1,
+    "graph_blocking": true,
+    "min_authority_length": 0,
+    "max_authority_group": 25
+  },
+  "config_id": "1151a18b05f67e73a3f9398d49765401799edc2d203875d2a4e7d4d6d2ea744c",
+  "seed": 1729,
+  "partition_company_hashes": {
+    "train": "e09d3e9de45e95973577d03b4a9bbc30ad7349382011231f3fe896432aa57bea",
+    "validation": "c9b50b2ce1c551c7914168c27b5fc1e70d41ea61f5a16046218e73a323de5fa7",
+    "test": "87bc69836d38b007924a3b177b2053bb6bee4e0737729d1d07ff78b537b69d23"
+  },
+  "partitions": {
+    "train": {
+      "records": 1202,
+      "candidate_pairs": 29831,
+      "oversized_postings_skipped": 7,
+      "records_with_capped_neighbors": 896,
+      "all_possible_pairs": 721801,
+      "companies": 840,
+      "known_positive_reference_pairs": 458,
+      "retrieved_positive_reference_pairs": 438,
+      "candidate_recall": 0.9563318777292577,
+      "weighted_baseline": {
+        "true_positives": 49,
+        "false_positives": 0,
+        "false_negatives": 409,
+        "precision": 1.0,
+        "recall": 0.10698689956331878,
+        "review_pairs": 49
+      }
+    },
+    "validation": {
+      "records": 417,
+      "candidate_pairs": 7820,
+      "oversized_postings_skipped": 0,
+      "records_with_capped_neighbors": 217,
+      "all_possible_pairs": 86736,
+      "companies": 280,
+      "known_positive_reference_pairs": 189,
+      "retrieved_positive_reference_pairs": 181,
+      "candidate_recall": 0.9576719576719577,
+      "weighted_baseline": {
+        "true_positives": 20,
+        "false_positives": 0,
+        "false_negatives": 169,
+        "precision": 1.0,
+        "recall": 0.10582010582010581,
+        "review_pairs": 20
+      },
+      "learned_end_to_end_reference_metrics": {
+        "rows": 7820,
+        "positives": 181,
+        "brier_score": 0.006535614256972514,
+        "true_positives": 155,
+        "false_positives": 8,
+        "false_negatives": 34,
+        "precision": 0.950920245398773,
+        "recall": 0.8201058201058201,
+        "review_pairs": 163
+      },
+      "difficult_retrieved_pairs": {
+        "true_positives": 113,
+        "false_positives": 8,
+        "false_negatives": 25,
+        "precision": 0.9338842975206612,
+        "recall": 0.8188405797101449,
+        "review_pairs": 121,
+        "rows": 7777
+      }
+    },
+    "test": {
+      "records": 410,
+      "candidate_pairs": 7667,
+      "oversized_postings_skipped": 0,
+      "records_with_capped_neighbors": 211,
+      "all_possible_pairs": 83845,
+      "companies": 280,
+      "known_positive_reference_pairs": 165,
+      "retrieved_positive_reference_pairs": 153,
+      "candidate_recall": 0.9272727272727272,
+      "weighted_baseline": {
+        "true_positives": 13,
+        "false_positives": 0,
+        "false_negatives": 152,
+        "precision": 1.0,
+        "recall": 0.07878787878787878,
+        "review_pairs": 13
+      },
+      "learned_end_to_end_reference_metrics": {
+        "rows": 7667,
+        "positives": 153,
+        "brier_score": 0.004467887446185121,
+        "true_positives": 133,
+        "false_positives": 3,
+        "false_negatives": 32,
+        "precision": 0.9779411764705882,
+        "recall": 0.806060606060606,
+        "review_pairs": 136
+      },
+      "difficult_retrieved_pairs": {
+        "true_positives": 105,
+        "false_positives": 3,
+        "false_negatives": 19,
+        "precision": 0.9722222222222222,
+        "recall": 0.8467741935483871,
+        "review_pairs": 108,
+        "rows": 7638
+      }
+    }
+  },
+  "elapsed_seconds": 46.31,
+  "protocol": "Whole asserted company identities split 60/20/20 before candidate indexing. No negative subsampling. Three regularizations and cutoff selected on validation only at target reference precision 0.95. Test evaluated after selection. All authority identifiers and alias fields masked. No independent probability calibration.",
+  "limitations": [
+    "Publisher-asserted GB-COH IDs are weak reference labels, not verified registry identities or human judgments. Incorrect reused IDs can corrupt either class.",
+    "Different IDs are treated as NonMatch within this closed cohort. Missing/invalid IDs and uncertain collisions are excluded, not labeled NonMatch.",
+    "One observed row per normalized name per company is retained. No generated typos, copied registry addresses or synthetic supplier records are added.",
+    "Convenience cohort from 2025 award publications; identity variation groups are enriched deliberately. Metrics do not estimate all procurement/payment accuracy.",
+    "Entity-disjoint splits use asserted company groups; undetected erroneous identities or families can still create leakage. Test observations within companies are correlated.",
+    "The classifier estimates reference-label agreement for retrieved candidates, not legal identity probability. It is uncalibrated and cannot authorize merges or actions.",
+    "Government payment names have no independent reference labels. Applying scores there measures workload, not accuracy, savings or production readiness."
+  ],
+  "activated": false,
+  "label_schema_note": "Reference fields renamed explicitly; weights, splits and test results unchanged. No additional model/threshold selection or probability calibration."
+}

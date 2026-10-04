@@ -1,0 +1,82 @@
+{
+  "dataset": "UK March 2025 published payments",
+  "measurement": "published_payment",
+  "source_reconciliation": {
+    "rows": 2772,
+    "source_total": "645400617.52",
+    "canonical_total": "645400617.52",
+    "difference": "0.00"
+  },
+  "sources": [
+    {
+      "url": "https://assets.publishing.service.gov.uk/media/682212f3ced319d02c906137/Expenditure_Over__25_000_-_March_2025__1_.csv",
+      "bytes": 186663,
+      "sha256": "ca8f2358692d877b4247644eb5adf2e2b9e0d3f55addf14a0a153b416c13fd89",
+      "rows": 1216,
+      "published_amount_total": "335445944.42",
+      "repeated_transaction_lines": 160
+    },
+    {
+      "url": "https://assets.publishing.service.gov.uk/media/680fdb56b0d43971b07f5c76/HMRC_spending_over_25000_for_March_2025.csv",
+      "bytes": 213348,
+      "sha256": "eca3d42b3c8f6c8e1b4746fcd3614b6b65311fbd4a7900a96b3b269dc3006a2a",
+      "rows": 1430,
+      "published_amount_total": "285744584.15",
+      "repeated_transaction_lines": 109
+    },
+    {
+      "url": "https://assets.publishing.service.gov.uk/media/68a888e8969253904d1557d0/Inv_over__25k_-_Mar_25.xlsx",
+      "bytes": 38695,
+      "sha256": "ddaf6694a1ec9adab2177f38c65343fbc9affdc07e6c8d95acf45f797f7ddb1e",
+      "rows": 126,
+      "published_amount_total": "24210088.95",
+      "repeated_transaction_lines": 18
+    }
+  ],
+  "model_id": "61c3fc29844cdf4c14a138ecae4a46131b073282df68e1f48c5f4c9fa39771ac",
+  "states": {
+    "baseline": {
+      "suppliers": 483,
+      "records": 2772,
+      "entities": 483,
+      "totals": [
+        {
+          "currency": "GBP",
+          "amount": "645400617.52",
+          "invoice_count": 2772
+        }
+      ],
+      "review_candidates": 61,
+      "snapshot": "866ed6d05e5ff9acaf9d0b79e87f1bef857a0e9aa890e637021fa9a33d936d74",
+      "human_review_labels": 0,
+      "training_feedback_rows": 0,
+      "actions": 0,
+      "dbt_gate": "passed"
+    },
+    "research": {
+      "suppliers": 483,
+      "records": 2772,
+      "entities": 483,
+      "totals": [
+        {
+          "currency": "GBP",
+          "amount": "645400617.52",
+          "invoice_count": 2772
+        }
+      ],
+      "review_candidates": 190,
+      "snapshot": "474821ec2bb9be2870a22deb3a3768b52e3ebbc14ea6a4b000ea760026bcb50f",
+      "human_review_labels": 0,
+      "training_feedback_rows": 0,
+      "actions": 0,
+      "dbt_gate": "passed",
+      "review_pack_rows": 141,
+      "review_pack_strata": {
+        "above_model_cutoff": 190,
+        "near_miss": 1,
+        "below_threshold": 10618
+      }
+    }
+  },
+  "limitations": "Payment identities have no independent labels. Reference estimates select review cases, not verified matches. All human label fields are blank."
+}

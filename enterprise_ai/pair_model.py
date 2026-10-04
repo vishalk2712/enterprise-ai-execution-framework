@@ -92,13 +92,13 @@ def predict(features, artifact):
     return sigmoid(logit)
 
 
-def partitions_for(rows, config_id, calibrate=False):
+def partitions_for(rows, config_id, calibrate=False, label_field="human_label"):
     partitions = {s: [] for s in (("train", "validation", "calibration", "test") if calibrate else ("train", "validation", "test"))}
     seen_evaluations, seen_pairs, group_split, record_split = set(), set(), {}, {}
     for row in rows:
         if not isinstance(row, dict):
             raise ValueError("Each label must be a JSON object")
-        if row.get("human_label") not in {"Match", "NonMatch"}:
+        if row.get(label_field) not in {"Match", "NonMatch"}:
             raise ValueError("Verified Match/NonMatch labels required; algorithm outcomes are not labels")
         if row.get("config_id") != config_id or row.get("split") not in partitions or row.get("feature_schema") != FEATURE_SCHEMA:
             raise ValueError("Exact config, feature schema and explicit split required")
@@ -126,7 +126,7 @@ def partitions_for(rows, config_id, calibrate=False):
             seen.add(value)
         partitions[row["split"]].append(row)
     for split, subset in partitions.items():
-        if len(subset) < 10 or {r["human_label"] for r in subset} != {"Match", "NonMatch"}:
+        if len(subset) < 10 or {r[label_field] for r in subset} != {"Match", "NonMatch"}:
             raise ValueError(f"{split} needs at least 10 rows and both classes; this minimum does not establish statistical adequacy")
     return partitions
 
@@ -160,15 +160,15 @@ def select_threshold(labels, probabilities, target_precision):
     return best[2] if best else 1.0
 
 
-def diagnostics(rows, probabilities, threshold):
-    labels = [int(r["human_label"] == "Match") for r in rows]
+def diagnostics(rows, probabilities, threshold, label_field="human_label"):
+    labels = [int(r[label_field] == "Match") for r in rows]
     return {"rows": len(rows), "positives": sum(labels),
             "brier_score": sum((p-y)**2 for p, y in zip(probabilities, labels)) / len(rows),
             **classification(labels, probabilities, threshold)}
 
 
-def reliability(rows, probabilities):
-    labels = [int(r["human_label"] == "Match") for r in rows]
+def reliability(rows, probabilities, label_field="human_label"):
+    labels = [int(r[label_field] == "Match") for r in rows]
     bins = []
     for index in range(10):
         selected = [(p, y) for p, y in zip(probabilities, labels) if min(9, int(p * 10)) == index]
@@ -178,18 +178,24 @@ def reliability(rows, probabilities):
     return bins
 
 
-def fit_pair_model(rows, config_id, domain, target_precision=.95, calibrate=False):
+def fit_pair_model(rows, config_id, domain, target_precision=.95, calibrate=False, label_field="human_label"):
     if not isinstance(domain, str) or not domain.strip() or not isinstance(config_id, str) or not config_id:
         raise ValueError("Domain and exact matching config ID required")
     if not finite_number(target_precision) or not 0 < target_precision <= 1:
         raise ValueError("Target validation precision must be in (0,1]")
-    partitions = partitions_for(rows, config_id, calibrate)
+    if label_field not in {"human_label", "reference_label"}:
+        raise ValueError("Use human_label or explicit reference_label provenance")
+    if label_field == "reference_label" and any(not isinstance(r, dict) or not r.get("label_provenance") or "human_label" in r for r in rows):
+        raise ValueError("Reference labels require explicit provenance and no human_label field")
+    if label_field == "reference_label" and calibrate:
+        raise ValueError("Weak reference labels cannot produce reviewer probability calibration")
+    partitions = partitions_for(rows, config_id, calibrate, label_field)
     try:
         import numpy as np
     except ImportError as exc:
         raise ValueError("Training requires NumPy: python -m pip install -r requirements-ml.txt") from exc
     matrices = {s: np.asarray([[r["model_features"][n] for n in FEATURE_NAMES] for r in subset], dtype=float) for s, subset in partitions.items()}
-    labels = {s: np.asarray([int(r["human_label"] == "Match") for r in subset], dtype=float) for s, subset in partitions.items()}
+    labels = {s: np.asarray([int(r[label_field] == "Match") for r in subset], dtype=float) for s, subset in partitions.items()}
     x, y = matrices["train"], labels["train"]
     candidates = []
     for penalty in (.0001, .001, .01):
@@ -204,7 +210,7 @@ def fit_pair_model(rows, config_id, domain, target_precision=.95, calibrate=Fals
         scalar_model = {"weights": weights.tolist(), "intercept": intercept}
         predictions = [predict(row["model_features"], scalar_model) for row in partitions["validation"]]
         threshold = select_threshold(labels["validation"].tolist(), predictions, target_precision)
-        validation = diagnostics(partitions["validation"], predictions, threshold)
+        validation = diagnostics(partitions["validation"], predictions, threshold, label_field)
         # Validation alone selects weights and threshold. Test is never used.
         key = (validation["recall"] if validation["review_pairs"] else -1, -validation["brier_score"])
         candidates.append((key, weights, intercept, penalty, threshold, validation))
@@ -215,9 +221,10 @@ def fit_pair_model(rows, config_id, domain, target_precision=.95, calibrate=Fals
                 "config_id": config_id, "domain": domain.strip(), "weights": weights.tolist(), "intercept": intercept,
                 "regularization": penalty, "iterations": 1800, "review_threshold": threshold,
                 "target_validation_precision": target_precision, "training_rows": len(y),
-                "validation": validation, "test": diagnostics(partitions["test"], test_predictions, threshold),
+                "validation": validation, "test": diagnostics(partitions["test"], test_predictions, threshold, label_field),
                 "labels_sha256": fingerprint(rows), "probability_status": "model_estimate",
                 "limitations": "Uncalibrated estimate for the labeled candidate distribution. Validation precision is observed, not guaranteed. Entity groups must be correct. No auto-merges or action authorization; person benchmarks do not establish supplier accuracy."}
+    artifact["label_field"] = label_field
     if calibrate:
         # Fixed monotone Platt fit on its own partition, after weight selection.
         # Neither calibration parameters nor thresholds are selected on test.

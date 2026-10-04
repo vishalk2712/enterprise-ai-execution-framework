@@ -32,7 +32,7 @@ SPEND_FIELDS = ("invoice_id", "supplier_id", "invoice_date", "amount", "currency
 MAX_BYTES = 5_000_000
 QUERY_WORDS = set("""what is the total totals spend spent net by currency currencies show me please all imported
     suppliers supplier for of on from and or to in our we have has how much money did do does a an are
-    this these those which highest top invoice invoices duplicate duplicates identity identities resolve
+    this these those which highest top invoice invoices payment payments published duplicate duplicates identity identities resolve
     resolved matched matching merge evidence amount amounts summary give tell list entity entities with
     review candidate candidates find identify display explain i want can you record records vendor vendors""".split())
 # Recognize currency filters independently of whether that currency has rows.
@@ -292,6 +292,8 @@ class Engine:
             from .pair_model import apply_model
             apply_model(evaluations, self.pair_model, self.match_config)
             statistics["pair_model"] = self.pair_model
+            if self.pair_model.get("label_field") == "reference_label":
+                warnings.append("Experimental classifier: trained on publisher-asserted company IDs, not human-verified matches. Scores are uncalibrated reference estimates; payment accuracy has not been measured. No model-only merges.")
         if self.calibration is not None:
             from .calibration import probability
             statistics["calibration"] = self.calibration
@@ -305,6 +307,10 @@ class Engine:
             if adapter.get("version", "").startswith("source-adapter-"):
                 for table in ("suppliers", "spend"):
                     warnings.extend(f"Source adapter ({table}): {note}" for note in adapter[table].get("notes", []))
+            if adapter.get("public_data", {}).get("measurement") == "published_payment":
+                warnings.extend([
+                    "Public-data cohort: published payment lines in GBP; tax basis is unknown. These amounts are not net invoices or contract awards.",
+                    "Supplier country ZZ means unknown. Source supplier keys identify exact observations, not verified legal entities. No human identity labels have been created."])
         from .governance import annotate, VERSION as POLICY_VERSION
         annotate(evaluations, suppliers)
         statistics.update(dataset_namespace=self.dataset_namespace, governance_policy=POLICY_VERSION)
@@ -331,6 +337,8 @@ class Engine:
                 "snapshot": snapshot, "source_hashes": {"suppliers.csv": digest(suppliers_csv), "spend.csv": digest(spend_csv)},
                 "full_characters": len(suppliers_csv) + len(spend_csv), "analyzed_at": now(),
                 "snapshot_id": snapshot_id, "matching_config_id": self.match_config.config_id, "matching_statistics": statistics}
+        adapter = (contract_manifest or {}).get("source_adapter", contract_manifest or {})
+        meta["measurement"] = "published_payment" if adapter.get("public_data", {}).get("measurement") == "published_payment" else "invoice_net"
         with self.lock, self.db:
             meta["resolution_run_id"] = resolution_audit.persist_run(self.db, snapshot_id, self.match_config, evaluations, statistics)
             evaluation_ids = {(e["left_id"], e["right_id"]): e["evaluation_id"] for e in evaluations}
@@ -633,7 +641,7 @@ class Engine:
                 answer += f"{len(reviews)} candidate pair(s) require review. Source identifiers have not been independently verified."
                 if requested_currencies:
                     unknowns.append("Currency filters apply only to spend queries; supplier identity does not depend on invoice currency.")
-            elif re.search(r"\b(spend|spent|total|totals|invoice|invoices|supplier|suppliers|top|highest)\b", q):
+            elif re.search(r"\b(spend|spent|total|totals|invoice|invoices|payment|payments|supplier|suppliers|top|highest)\b", q):
                 intent = "spend_summary"
                 wanted = {s for e in named for s in e["source_supplier_ids"]}
                 records = [r for r in invoices if not wanted or r["supplier_id"] in wanted]
@@ -643,14 +651,18 @@ class Engine:
                 for r in records:
                     by_currency[r["currency"]] += Decimal(r["amount"])
                 scope = ", ".join(e["display_name"] for e in named) if named else "all imported suppliers"
+                published_payments = state["dataset"].get("measurement") == "published_payment"
                 if by_currency:
-                    answer = f"Net spend for {scope}: " + "; ".join(f"{c} {v:,.2f}" for c, v in sorted(by_currency.items())) + f" across {len(records)} unique invoices. Currencies are kept separate."
+                    label, grain = ("Published payments", "published payment lines") if published_payments else ("Net spend", "unique invoices")
+                    answer = f"{label} for {scope}: " + "; ".join(f"{c} {v:,.2f}" for c, v in sorted(by_currency.items())) + f" across {len(records)} {grain}. Currencies are kept separate."
                 else:
                     answer = f"No matching invoices for {scope}" + (" in " + ", ".join(sorted(requested_currencies)) if requested_currencies else "") + "."
                 missing_currencies = requested_currencies - set(by_currency)
                 if missing_currencies:
                     unknowns.append("No invoices in this scope for: " + ", ".join(sorted(missing_currencies)) + ". No currency conversion was performed.")
                 unknowns.append("Supported spend scope covers all imported dates. Date/category filters and forecasts require analyst review.")
+                if published_payments:
+                    unknowns.append("Amounts are as published with unknown tax basis, not net invoices. Thresholded transparency files do not cover all departmental expenditure.")
                 if re.search(r"\b(top|highest)\b", q):
                     wanted_entities = {e["entity_id"] for e in named}
                     selected = [r for r in state["supplier_spend"]
@@ -661,7 +673,8 @@ class Engine:
                         if r["currency"] not in leaders:
                             leaders[r["currency"]] = r
                     if leaders:
-                        answer += " Highest net supplier spend per currency in this scope: " + "; ".join(f"{c}: {r['name']} {r['amount']}" for c, r in leaders.items()) + "."
+                        label = "published supplier payments" if published_payments else "net supplier spend"
+                        answer += f" Highest {label} per currency in this scope: " + "; ".join(f"{c}: {r['name']} {r['amount']}" for c, r in leaders.items()) + "."
             else:
                 intent = "needs_review"
                 records = []
@@ -823,10 +836,13 @@ class Engine:
                 # Encode Markdown syntax as literal entities, preventing data
                 # from becoming links, images, code, headings or list markers.
                 return "".join(f"&#{ord(c)};" if c in "\\`*_{}[]()#+:!|" else c for c in text)
+            payments = state["dataset"].get("measurement") == "published_payment"
+            measure = "Published payments" if payments else "Net spend"
+            grain = "published payment lines" if payments else "unique invoices"
             parts = ["# Supplier intelligence report", "", "Local deterministic baseline. No external system was updated by this report.", "",
-                     "Snapshot: " + state["dataset"].get("snapshot", "No dataset"), "", "## Net spend by currency", ""]
+                     "Snapshot: " + state["dataset"].get("snapshot", "No dataset"), "", f"## {measure} by currency", ""]
             for row in state["totals"]:
-                parts.append(f"- {row['currency']} {row['amount']} ({row['invoice_count']} unique invoices)")
+                parts.append(f"- {row['currency']} {row['amount']} ({row['invoice_count']} {grain})")
             parts += ["", "## Proposed supplier entities", ""]
             for row in state["entities"]:
                 parts.append(f"- {safe(row['display_name'])}: {safe(', '.join(row['source_supplier_ids']))}. Basis: {safe('; '.join(row['match_basis']))}.")

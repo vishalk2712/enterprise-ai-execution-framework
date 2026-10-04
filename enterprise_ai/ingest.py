@@ -40,7 +40,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_EVEN
 from pathlib import Path
 
-VERSION = "source-adapter-v2"
+VERSION = "source-adapter-v3"
 MAX_SOURCE_BYTES = 20_000_000
 MAX_SOURCE_ROWS = 20_000
 
@@ -434,13 +434,17 @@ DATE_PATTERNS = (
     (re.compile(r"^(\d{4})/(\d{2})/(\d{2})$"), "ymd"),
     (re.compile(r"^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})$"), "ambiguous"),
     (re.compile(r"^(\d{1,2})[\- ]([A-Za-z]{3})[\- ](\d{4})$"), "dmonthy"),
+    (re.compile(r"^(\d{1,2})[\- ]([A-Za-z]{3})[\- ](\d{2})$"), "dmonthy_short"),
+    (re.compile(r"^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2})$"), "ambiguous_short"),
 )
 MONTHS = {m: i for i, m in enumerate(
     ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), 1)}
 
 
-def parse_date(value: str, order="dmy", strict=True):
+def parse_date(value: str, order="dmy", strict=True, two_digit_year_pivot=70):
     """Return an ISO date string, or None. order applies only to ambiguous forms."""
+    if isinstance(two_digit_year_pivot, bool) or not isinstance(two_digit_year_pivot, int) or not 0 <= two_digit_year_pivot <= 100:
+        raise IngestError("two_digit_year_pivot must be an integer in 0..100")
     text = str(value).strip()
     if not text:
         return None
@@ -462,14 +466,18 @@ def parse_date(value: str, order="dmy", strict=True):
                 d, m = (a, b) if order == "dmy" else (b, a)
             elif kind == "ymd":
                 y, m, d = (int(g) for g in match.groups())
-            elif kind == "dmonthy":
+            elif kind in {"dmonthy", "dmonthy_short"}:
                 d, month, y = match.group(1), match.group(2).lower()[:3], match.group(3)
                 if month not in MONTHS:
                     return None
                 d, m, y = int(d), MONTHS[month], int(y)
             else:
+                if order not in {"dmy", "mdy"}:
+                    return None
                 a, b, y = (int(g) for g in match.groups())
                 d, m = (a, b) if order == "dmy" else (b, a)
+            if kind.endswith("_short"):
+                y += 1900 if y >= two_digit_year_pivot else 2000
             return date(y, m, d).isoformat()
         except ValueError:
             return None
@@ -487,7 +495,7 @@ def detect_date_order(values) -> str:
     ambiguous_values = 0
     for value in values:
         text = str(value).strip()
-        match = re.fullmatch(r"(\d{1,2})[/.\-](\d{1,2})[/.\-]\d{4}", text)
+        match = re.fullmatch(r"(\d{1,2})[/.\-](\d{1,2})[/.\-](?:\d{4}|\d{2})", text)
         if match:
             first, second = int(match.group(1)), int(match.group(2))
         elif re.fullmatch(r"\d{8}", text):
@@ -606,6 +614,7 @@ class SourceMapping:
     transforms: dict = field(default_factory=dict)   # field -> [transform names]
     auxiliary: dict = field(default_factory=dict)    # tax_amount/gross_amount/... -> column
     date_order: str = "dmy"
+    two_digit_year_pivot: int = 70  # YY >= pivot -> 19YY; otherwise 20YY
     decimal_style: str = "point"
     surrogate_keys: bool = True      # prefix native IDs with the source system
     invoice_key_scope: str = "dataset"   # "supplier" when numbers repeat per vendor
@@ -626,6 +635,8 @@ class SourceMapping:
             raise IngestError("source_system must be 1..40 letters, digits, underscores or hyphens")
         if self.date_order not in {"dmy", "mdy", "ymd"}:
             raise IngestError("date_order must be dmy, mdy or ymd")
+        if isinstance(self.two_digit_year_pivot, bool) or not isinstance(self.two_digit_year_pivot, int) or not 0 <= self.two_digit_year_pivot <= 100:
+            raise IngestError("two_digit_year_pivot must be an integer in 0..100")
         if self.decimal_style not in {"point", "comma", "plain"}:
             raise IngestError("decimal_style must be point, comma or plain")
         if self.invoice_key_scope not in {"dataset", "supplier"}:
@@ -858,7 +869,8 @@ def apply_mapping(data, mapping: SourceMapping, name=None, profile: SourceProfil
                 record["invoice_id"] = surrogate(native["invoice_id"])
 
         if mapping.target == "spend":
-            iso = parse_date(record.get("invoice_date", ""), mapping.date_order)
+            iso = parse_date(record.get("invoice_date", ""), mapping.date_order,
+                             two_digit_year_pivot=mapping.two_digit_year_pivot)
             if iso is None:
                 rejected.append({"line": line, "reason": f"unparseable date {record.get('invoice_date', '')!r}"})
                 continue
@@ -1057,6 +1069,7 @@ def main(argv=None):
     mapper.add_argument("--target", required=True, choices=["suppliers", "spend"])
     mapper.add_argument("--source-system", default="SRC")
     mapper.add_argument("--date-order", choices=["dmy", "mdy", "ymd"])
+    mapper.add_argument("--two-digit-year-pivot", type=int, default=70)
     mapper.add_argument("--decimal-style", choices=["point", "comma", "plain"])
     mapper.add_argument("--column", action="append", default=[], metavar="FIELD=SOURCE", help="Explicitly confirm or override a column mapping")
     mapper.add_argument("--output", required=True)
@@ -1068,6 +1081,7 @@ def main(argv=None):
     prep.add_argument("--spend-mapping")
     prep.add_argument("--source-system", default="SRC")
     prep.add_argument("--date-order", choices=["dmy", "mdy", "ymd"])
+    prep.add_argument("--two-digit-year-pivot", type=int, default=70)
     prep.add_argument("--decimal-style", choices=["point", "comma", "plain"])
     prep.add_argument("--invoice-key-scope", choices=["dataset", "supplier"],
                       help="Use 'supplier' when invoice numbers repeat across vendors")
@@ -1087,7 +1101,9 @@ def main(argv=None):
         if args.command == "map":
             data = _load(args.input)
             profile = profile_source(data, Path(args.input).name)
-            extra = {"date_order": args.date_order} if args.date_order else {}
+            extra = {"two_digit_year_pivot": args.two_digit_year_pivot}
+            if args.date_order:
+                extra["date_order"] = args.date_order
             if args.decimal_style:
                 extra["decimal_style"] = args.decimal_style
             if args.column:
@@ -1104,7 +1120,7 @@ def main(argv=None):
 
         supplier_mapping = SourceMapping.from_json(Path(args.supplier_mapping).read_text(encoding="utf-8")) if args.supplier_mapping else None
         spend_mapping = SourceMapping.from_json(Path(args.spend_mapping).read_text(encoding="utf-8")) if args.spend_mapping else None
-        spend_options = {}
+        spend_options = {"two_digit_year_pivot": args.two_digit_year_pivot}
         if args.date_order:
             spend_options["date_order"] = args.date_order
         if args.decimal_style:

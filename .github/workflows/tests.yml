@@ -3,6 +3,20 @@ on: [push, pull_request]
 permissions:
   contents: read
 jobs:
+  intelligence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python -m unittest discover -s tests -p test_intelligence.py -v
+      - run: node --check enterprise_ai/static/risks.js
+      - run: node --check enterprise_ai/static/reviews.js
+      - run: node --check enterprise_ai/static/app.js
   source-adapter:
     runs-on: ubuntu-latest
     steps:

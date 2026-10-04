@@ -23,15 +23,15 @@
     3.369619168765286,
     1.6297815661485704,
     5.464008076575975,
-    -1.1404759251120244,
     0.0,
     0.0,
-    -1.1404759251120244,
+    0.0,
+    0.0,
     0.0,
     0.0,
     0.0
   ],
-  "intercept": -5.4902309431464245,
+  "intercept": -7.771182793370474,
   "regularization": 0.0001,
   "iterations": 1800,
   "review_threshold": 0.10782381324458289,
@@ -78,5 +78,75 @@
   "source_license": "https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/",
   "attribution": "Contains public sector information licensed under the Open Government Licence v3.0.",
   "label_field": "reference_label",
-  "model_id": "61c3fc29844cdf4c14a138ecae4a46131b073282df68e1f48c5f4c9fa39771ac"
+  "training_feature_support": {
+    "method": "training-range-v1",
+    "rows": 29831,
+    "ranges": {
+      "name_levenshtein": {
+        "min": 0.0,
+        "max": 0.9807692307692307
+      },
+      "name_token_jaccard": {
+        "min": 0.0,
+        "max": 1.0
+      },
+      "name_trigram_dice": {
+        "min": 0.0,
+        "max": 0.972972972972973
+      },
+      "name_sorted_levenshtein": {
+        "min": 0.0,
+        "max": 1.0
+      },
+      "address_jaccard": {
+        "min": 0.0,
+        "max": 1.0
+      },
+      "address_present": {
+        "min": 1.0,
+        "max": 1.0
+      },
+      "postcode_exact": {
+        "min": 0.0,
+        "max": 0.0
+      },
+      "postcode_present": {
+        "min": 0.0,
+        "max": 0.0
+      },
+      "same_country": {
+        "min": 1.0,
+        "max": 1.0
+      },
+      "shared_tax_id": {
+        "min": 0.0,
+        "max": 0.0
+      },
+      "shared_registration_id": {
+        "min": 0.0,
+        "max": 0.0
+      },
+      "identifier_conflict": {
+        "min": 0.0,
+        "max": 0.0
+      }
+    },
+    "constant_features": {
+      "address_present": 1.0,
+      "postcode_exact": 0.0,
+      "postcode_present": 0.0,
+      "same_country": 1.0,
+      "shared_tax_id": 0.0,
+      "shared_registration_id": 0.0,
+      "identifier_conflict": 0.0
+    }
+  },
+  "constant_feature_correction": {
+    "method": "fold-training-constants-v1",
+    "source_model_id": "61c3fc29844cdf4c14a138ecae4a46131b073282df68e1f48c5f4c9fa39771ac",
+    "source_labels_sha256": "33b4fad07bd182d7767174642acebcbe8aa86fa81645f8e9ff830e016ba7e0cb",
+    "refit": false,
+    "threshold_reselected": false
+  },
+  "model_id": "c3058988da0cdce96e3dd0f45e752636c1de6b71fa851fafd90b682aa3f139cb"
 }

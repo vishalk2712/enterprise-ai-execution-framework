@@ -6,6 +6,12 @@ The first working module of an enterprise data-to-outcome framework. Import supp
 
 The core runs on a laptop with Python 3.10+ and no extra packages, GPU, API key or cloud account. Browser execution optionally adds Node.js and Playwright. Factual summaries optionally use an already installed local Ollama model. Resolution remains governed by deterministic rules and the explicitly configured classifier; no newly trained LLM is bundled.
 
+## New in v0.8
+
+Real-extract preparation now profiles and maps delimited or optional Excel files into the strict importer, preserves source-prefixed IDs and local extras, and binds reviewed mappings to approval snapshots. Placeholder/reused authority IDs are blocked, generic supplier names no longer capture spend queries, conflict reviews name the failing pair, and dashboard candidates are paged with true totals. Operational audit events now have a verifiable hash chain and exportable checkpoints.
+
+Read the [v0.8 source preparation and correctness guide](docs/source-adapter-v08.md) for commands, migration, privacy and monetary limits. The adapter refuses lossy rounding and treats SAP tax fields as associations unless an explicit verified mapping says otherwise. Existing v0.7 execution and RBAC boundaries remain in place.
+
 ## New in v0.7
 
 **Bounded execution recovery** quarantines exhausted jobs after three grants, persists investigation evidence and sends reference-only Redis dead letters. **Operational retention** archives old verified queue/outbox rows before deleting them, preserving approvals and destination idempotency. **Clock-safe grants** use coordinator/destination-owned monotonic expiry; workers never interpret local-clock deadlines.
@@ -104,7 +110,7 @@ I-001,S-001,2026-01-15,120.50,GBP,Parts,Synthetic demonstration invoice
 ```
 
 - `supplier_id` must be unique; every invoice must reference an imported supplier.
-- `invoice_id` is a dataset-wide key. Combine source-system and supplier identifiers into a unique key if invoice numbers repeat across vendors.
+- `invoice_id` is a dataset-wide key. The v0.8 source adapter creates source-system/vendor composite keys for repeated invoice numbers; use `analyze-prepared` to retain its mapping evidence.
 - Country and currency fields accept two and three letters respectively; this prototype does not verify them against official registries.
 - Authority identifiers are supplied assertions, not registry-verified facts. Tax groups and shared identifiers may not represent one legal entity. Review proposed groups before operational use.
 - Amounts accept up to 12 whole digits and two decimal places. Negative amounts represent credits. The sample assumes consistent net spend; tax handling and currencies with other minor-unit precision are outside this version.
@@ -167,6 +173,6 @@ Supplier models must earn their place on independent, permissioned corporate exa
 
 ## Attribution
 
-The default implementation is original code using Python's standard library and browser platform APIs. The optional browser adapter uses Playwright; Ollama and any installed model retain their respective licenses. The optional data-contract environment uses dbt Core, dbt-duckdb and DuckDB under their respective licenses. Classifier training uses NumPy; optional Parquet export uses Apache Arrow. The experimental SPIDER model's attribution and limits are in its [model card](models/README.md), and the corporate benchmark's GLEIF attribution is in the [v0.4 guide](docs/governance-v04.md). No code, model weights, skills or raw datasets from MiniMind, MiroFish, Graphify, OpenViking, Roo Code or Jev are bundled. Those projects retain their own licenses.
+The core uses Python's standard library and browser platform APIs. v0.8 adapts the source adapter and regression tests supplied in the user's expert review; the correctness changes are documented in its release guide. The optional browser adapter uses Playwright; Ollama and any installed model retain their respective licenses. The optional data-contract environment uses dbt Core, dbt-duckdb and DuckDB under their respective licenses. Classifier training uses NumPy; optional Parquet export uses Apache Arrow. The experimental SPIDER model's attribution and limits are in its [model card](models/README.md), and the corporate benchmark's GLEIF attribution is in the [v0.4 guide](docs/governance-v04.md). No code, model weights, skills or raw datasets from MiniMind, MiroFish, Graphify, OpenViking, Roo Code or Jev are bundled. Those projects retain their own licenses.
 
 Released under the [MIT License](LICENSE).

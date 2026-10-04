@@ -1,0 +1,2 @@
+# Optional XLSX reader, pinned to the version exercised by source-adapter CI.
+openpyxl==3.1.5

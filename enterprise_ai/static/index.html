@@ -26,12 +26,12 @@
     <div id="workspace-content" hidden>
     <section class="hero" id="overview">
       <div><div class="eyebrow"><span class="short-rule"></span> DATA → EVIDENCE → OUTCOME</div><h1>Clarity across<br>your supplier data.</h1><p>Resolve identities. Understand spend. Move from a source-backed answer to an approved action.</p></div>
-      <div class="hero-aside"><div class="version-tag">WORKING PROTOTYPE / V0.8</div><p>Evidence for every decision.<br>Your data stays in this local workspace.</p><div class="hero-buttons"><button id="demo-button" class="button button-primary" type="button"><span aria-hidden="true">↗</span> Load sample data</button><a id="export-button" class="button button-secondary" href="/api/export" download="supplier-intelligence-report.md">Export report</a></div></div>
+      <div class="hero-aside"><div class="version-tag">WORKING PROTOTYPE / V0.9</div><p>Evidence for every decision.<br>Your data stays in this local workspace.</p><div class="hero-buttons"><button id="demo-button" class="button button-primary" type="button"><span aria-hidden="true">↗</span> Load sample data</button><a id="export-button" class="button button-secondary" href="/api/export" download="supplier-intelligence-report.md">Export report</a></div></div>
     </section>
     <section class="metrics" aria-label="Dataset overview">
       <div class="metric"><span class="metric-label">SUPPLIER RECORDS</span><strong id="supplier-count">—</strong><span>Across imported source rows</span></div>
       <div class="metric"><span class="metric-label">RESOLVED ENTITIES</span><strong id="entity-count">—</strong><span>Grouped by exact identity evidence</span></div>
-      <div class="metric"><span class="metric-label">INVOICE RECORDS</span><strong id="invoice-count">—</strong><span>Included in spend analysis</span></div>
+      <div class="metric"><span class="metric-label" id="record-measure-label">INVOICE RECORDS</span><strong id="invoice-count">—</strong><span>Included in spend analysis</span></div>
       <div class="metric metric-accent"><span class="metric-label">NEEDS REVIEW</span><strong id="review-count">—</strong><span>Possible matches kept separate</span></div>
     </section>
     <div id="dataset-warnings" class="dataset-warnings" aria-live="polite" hidden></div>

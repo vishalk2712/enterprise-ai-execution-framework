@@ -86,6 +86,7 @@ function renderState(next) {
   $("#supplier-count").textContent = loaded ? numberFormat.format(data.supplier_count || 0) : "—";
   $("#entity-count").textContent = loaded ? numberFormat.format((state.entities || []).length) : "—";
   $("#invoice-count").textContent = loaded ? numberFormat.format(data.invoice_count || 0) : "—";
+  $("#record-measure-label").textContent = data.measurement === 'published_payment' ? 'PAYMENT LINES' : 'INVOICE RECORDS';
   $("#review-count").textContent = loaded ? numberFormat.format(state.review_candidate_total ?? (state.review_candidates || []).length) : "—";
   const warnings = $("#dataset-warnings");
   warnings.replaceChildren();
@@ -177,7 +178,8 @@ function renderSpend() {
   }
   for (const total of state.totals || []) {
     const card = element("div", "currency-total");
-    card.append(element("span", "", safeString(total.currency)), element("strong", "", decimalDisplay(total.amount)), element("small", "", `${total.invoice_count || 0} invoice records`));
+    const grain = state.dataset?.measurement === 'published_payment' ? 'published payment lines · tax basis unknown' : 'invoice records';
+    card.append(element("span", "", safeString(total.currency)), element("strong", "", decimalDisplay(total.amount)), element("small", "", `${total.invoice_count || 0} ${grain}`));
     totals.append(card);
     const group = (state.supplier_spend || []).filter((item) => item.currency === total.currency).sort((a, b) => Number(b.amount) - Number(a.amount));
     if (!group.length) continue;
@@ -272,6 +274,20 @@ function renderSourceProfile() {
   if (host.hidden) return;
   host.append(element('h2', '', 'Source preparation evidence'));
   host.append(element('p', 'section-note', `Source system: ${source.source_system}. Column mappings are operator assertions; registry verification remains separate.`));
+  if (source.public_data?.measurement === 'published_payment') {
+    host.append(element('h3', '', 'Published payment sources'));
+    const list = element('ul');
+    for (const file of source.public_data.sources || []) {
+      const item = element('li');
+      item.append(element('strong', '', file.file || file.name || 'Published file'),
+        element('p', 'section-note', `${file.rows} payment lines · GBP ${decimalDisplay(file.published_amount_total)} · ${file.repeated_transaction_lines} repeated transaction lines retained`),
+        element('small', '', `Source SHA256 ${file.sha256}`));
+      list.append(item);
+    }
+    host.append(list);
+    const reconciliation = source.public_data.reconciliation;
+    host.append(element('p', 'section-note', `Reconciliation difference: GBP ${decimalDisplay(reconciliation.difference)}. Supplier country is unknown. Amounts retain their published tax basis.`));
+  }
   for (const table of ['suppliers', 'spend']) {
     const profile = source.profiles?.[table];
     if (!profile) continue;

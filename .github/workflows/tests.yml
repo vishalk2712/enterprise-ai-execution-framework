@@ -3,6 +3,18 @@ on: [push, pull_request]
 permissions:
   contents: read
 jobs:
+  source-adapter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements-ingest.txt
+      - run: python -m unittest discover -s tests -p test_ingest.py -v
+      - run: python -m unittest discover -s tests -p test_adapter_safety.py -v
+        env:
+          OUTCOME_TEST_INGEST: '1'
   vault-security:
     runs-on: ubuntu-latest
     services:

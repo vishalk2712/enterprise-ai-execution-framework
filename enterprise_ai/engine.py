@@ -104,10 +104,15 @@ def evidence(row: dict) -> dict:
 
 
 class Engine:
-    def __init__(self, db_path: str = ":memory:", match_config: MatchConfig | None = None, calibration=None, pair_model=None, dataset_namespace="local", tenant_id='local', bank_link_key=None):
+    def __init__(self, db_path: str = ":memory:", match_config: MatchConfig | None = None, calibration=None, pair_model=None, dataset_namespace="local", tenant_id='local', bank_link_key=None, graph_discovery=False):
         if not isinstance(dataset_namespace, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", dataset_namespace):
             raise ValueError("dataset_namespace must be 1..80 letters, digits, underscores or hyphens")
         self.dataset_namespace = dataset_namespace
+        if not isinstance(graph_discovery, bool):
+            raise ValueError("graph_discovery must be boolean")
+        if graph_discovery and (calibration is not None or (isinstance(pair_model, dict) and pair_model.get('calibration'))):
+            raise ValueError("Graph discovery changes candidate prevalence; validate a new calibration cohort first")
+        self.graph_discovery = graph_discovery
         from .security import validate_tenant
         self.tenant_id = validate_tenant(tenant_id)
         if bank_link_key is not None and (not isinstance(bank_link_key,bytes) or len(bank_link_key)<32):
@@ -164,6 +169,8 @@ class Engine:
         from . import feedback, knowledge_graph
         feedback.migrate(self.db)
         knowledge_graph.migrate(self.db)
+        from . import risk
+        risk.migrate(self.db)
         from .execution import migrate
         migrate(self.db)
         from .distributed import migrate as migrate_distributed
@@ -288,6 +295,10 @@ class Engine:
                     row[field] = ""
         entities, reviews, memberships = self._resolve(suppliers)
         evaluations, statistics = evaluate_records(suppliers, self.match_config)
+        if self.graph_discovery:
+            from .graph_discovery import augment
+            statistics["graph_discovery"] = augment(evaluations, suppliers, self.match_config)
+            warnings.append("Graph association paths generate review candidates, never identity groups. Scores on the expanded candidate population require independent validation.")
         if self.pair_model is not None:
             from .pair_model import apply_model
             apply_model(evaluations, self.pair_model, self.match_config)
@@ -313,6 +324,11 @@ class Engine:
                     "Supplier country ZZ means unknown. Source supplier keys identify exact observations, not verified legal entities. No human identity labels have been created."])
         from .governance import annotate, VERSION as POLICY_VERSION
         annotate(evaluations, suppliers)
+        for item in evaluations:
+            if item.get("graph_paths") and item["algorithmic_outcome"] in {"Below_Threshold", "Excluded_Sampled"}:
+                item["heuristic_outcome"] = item["algorithmic_outcome"]
+                item["algorithmic_outcome"] = "Graph_Context_Review"
+                item["operational_decision"] = {"tier": "Association_Review", "reasons": ["Bounded graph path; association does not establish identity"], "auto_merge_eligible": False}
         statistics.update(dataset_namespace=self.dataset_namespace, governance_policy=POLICY_VERSION)
         review_map = {(r["left_id"], r["right_id"]): r for r in reviews}
         for item in evaluations:
@@ -323,14 +339,17 @@ class Engine:
                     item["algorithmic_outcome"] = "Authority_Grouped"
                 item["cluster_validation"] = "consistent_direct_identity_clique"
                 item["operational_decision"] = {"tier": "Direct_Identity_Grouped", "reasons": ["Deterministic legal identity keys and whole-cluster consistency passed; the model did not authorize this group"], "auto_merge_eligible": False}
-            elif item["algorithmic_outcome"] in {"Review_Candidate", "Conflict_Review"}:
+            elif item["algorithmic_outcome"] in {"Review_Candidate", "Conflict_Review", "Graph_Context_Review"}:
                 review_map.setdefault(pair, {"left_id": pair[0], "right_id": pair[1], "left_name": item["left_name"], "right_name": item["right_name"],
-                    "reason": "Multi-feature similarity candidate; no automatic merge. Review identifiers and source evidence."})
+                    "reason": "Graph association path; inspect relationship evidence, not an identity conclusion." if item.get("graph_paths") else "Multi-feature similarity candidate; no automatic merge. Review identifiers and source evidence.",
+                    "graph_paths": item.get("graph_paths", [])})
         reviews = list(review_map.values())
         snapshot_id = digest(suppliers_csv + "\0" + spend_csv)
         snapshot = digest(snapshot_id + self.match_config.canonical() + json.dumps(contract_manifest, sort_keys=True) + json.dumps(self.calibration, sort_keys=True))
         if self.pair_model is not None:
             snapshot = digest(snapshot + json.dumps(self.pair_model, sort_keys=True))
+        if self.graph_discovery:
+            snapshot = digest(snapshot + statistics["graph_discovery"]["policy_id"])
         snapshot = digest(snapshot + self.dataset_namespace + POLICY_VERSION + self.tenant_id + self._meta('bank_link_key_id'))
         meta = {"supplier_count": len(suppliers), "invoice_count": len(invoices),
                 "entity_count": len(entities), "currencies": sorted({r["currency"] for r in invoices}),
@@ -359,7 +378,32 @@ class Engine:
                 self.db.execute("INSERT OR REPLACE INTO metadata VALUES(?,?)", (key, json.dumps(value)))
             self.db.execute("UPDATE actions SET status='stale' WHERE snapshot<>? AND status IN ('pending','approved')", (snapshot,))
             self._log("dataset_analyzed", {"snapshot": snapshot, "suppliers": len(suppliers), "invoices": len(invoices)})
+            from .risk import capture, persist, scan
+            capture(self.db, meta, self.dataset_namespace, suppliers, invoices, memberships)
+            persist(self.db, scan(self.db, meta, self.dataset_namespace, entities))
         return self.state()
+
+    def scan_risks(self):
+        from .risk import scan, persist, capture
+        with self.lock, self.db:
+            meta = self._meta("dataset")
+            if meta is None:
+                return {"count": 0, "coverage": "No dataset scanned yet"}
+            meta = {**meta, "measurement": meta.get("measurement", "invoice_net")}
+            namespace = meta.get('matching_statistics', {}).get('dataset_namespace', self.dataset_namespace)
+            if not self.db.execute("SELECT 1 FROM risk_observations WHERE snapshot=?", (meta['snapshot'],)).fetchone():
+                memberships = {r['supplier_id']: r['entity_id'] for r in self.db.execute('SELECT supplier_id,entity_id FROM suppliers')}
+                capture(self.db, meta, namespace, self._records('suppliers'), self._records('invoices'), memberships)
+            result = scan(self.db, meta, namespace, self._records("entities"))
+            persist(self.db, result)
+            self.db.execute("DELETE FROM metadata WHERE key='risk_monitor_error'")
+            return {k: v for k, v in result.items() if k != "dossiers"}
+
+    def risk_dossiers(self, limit=25, offset=0):
+        from .risk import dossiers
+        with self.lock:
+            namespace = self._meta('dataset', {}).get('matching_statistics', {}).get('dataset_namespace', self.dataset_namespace)
+            return {**dossiers(self.db, namespace, limit, offset), "monitor_error": self._meta('risk_monitor_error')}
 
     @staticmethod
     def _resolve(suppliers: list[dict]):
@@ -443,9 +487,14 @@ class Engine:
             return decision
 
     def feedback_summary(self):
-        from .feedback import current_samples
+        from .feedback import current_samples, sampling_config_id
         with self.lock:
             _, stats = current_samples(self.db, self.match_config.config_id, self.dataset_namespace)
+            sampling = sampling_config_id(self.match_config.config_id, self._meta('dataset', {}).get('matching_statistics', {}))
+            if sampling != self.match_config.config_id:
+                _, graph_stats = current_samples(self.db, sampling, self.dataset_namespace)
+                stats['graph_review_events'] = graph_stats['review_events']
+                stats['graph_eligible_pairs'] = graph_stats['eligible_pairs']
             return {**stats, "namespace": self.dataset_namespace, "config_id": self.match_config.config_id}
 
     def graph_neighbors(self, node_id, hops=2, limit=100, relation=None):
@@ -503,15 +552,19 @@ class Engine:
               JOIN review_decisions d ON d.evaluation_id=e.evaluation_id
               WHERE d.rowid=(SELECT MAX(d2.rowid) FROM review_decisions d2 WHERE d2.evaluation_id=e.evaluation_id)
                 AND d.human_label IN ('Match','NonMatch')""")
-            from .feedback import sample
+            from .feedback import sample, sampling_config_id
             exported = []
             for row in rows:
                 item = dict(row)
                 evaluation = json.loads(item.pop("payload_json"))
                 config = json.loads(item.pop("config_json"))
-                namespace = json.loads(item.pop("statistics_json")).get("dataset_namespace", "local")
+                stats = json.loads(item.pop("statistics_json"))
+                namespace = stats.get("dataset_namespace", "local")
+                config_id = sampling_config_id(item["config_id"], stats)
+                if config_id != item["config_id"]:
+                    item.update(base_matching_config_id=item["config_id"], graph_policy_id=stats["graph_discovery"]["policy_id"])
                 evaluation["evaluation_id"] = item["evaluation_id"]
-                item.update(sample(evaluation, config, item["config_id"], namespace), split=None, entity_group_ids=[],
+                item.update(sample(evaluation, config, config_id, namespace), split=None, entity_group_ids=[],
                             instructions="Deduplicate pair_key across runs; assign connected groups for BOTH endpoints and disjoint train/validation/test splits. Reviewers' labels do not authorize actions.")
                 exported.append(json.dumps(item))
             return "\n".join(exported) + ("\n" if exported else "")

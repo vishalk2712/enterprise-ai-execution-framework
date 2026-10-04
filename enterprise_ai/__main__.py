@@ -15,6 +15,7 @@ def main():
     parser.add_argument("--match-config", help="JSON MatchConfig overrides")
     parser.add_argument("--calibration", help="Reviewed supplier-domain calibration artifact; never enables auto-merges")
     parser.add_argument("--pair-model", help="Explicit supplier-domain pair classifier; routes human review only")
+    parser.add_argument("--graph-discovery", action="store_true", help="Add bounded association paths to review retrieval; never merge communities")
     parser.add_argument("--dataset-namespace", default="local", help="Stable client/source namespace for review cohorts")
     parser.add_argument('--tenant-id', default='local', help='One tenant per database, ERP instance and server process')
     parser.add_argument('--vault-config', help='Non-secret JSON vault connection settings')
@@ -142,7 +143,7 @@ def main():
     try:
         engine = Engine(args.db, config, json.loads(Path(args.calibration).read_text()) if args.calibration else None,
                         json.loads(Path(args.pair_model).read_text()) if args.pair_model else None, dataset_namespace=args.dataset_namespace,
-                        tenant_id=args.tenant_id, bank_link_key=bank_key)
+                        tenant_id=args.tenant_id, bank_link_key=bank_key, graph_discovery=args.graph_discovery)
     except (ValueError, TypeError, OSError) as exc:
         parser.exit(2, f"Invalid engine configuration: {exc}\n")
     try:
@@ -179,8 +180,9 @@ def main():
             print(json.dumps(engine.review(args.evaluation_id, args.label, args.reviewer, args.reason, args.supersedes), indent=2))
         elif args.command == "pipeline":
             from .pipeline import run_pipeline
-            print(json.dumps(run_pipeline(args.suppliers, args.spend, args.output_dir, not args.without_dbt, config, engine.calibration, engine.pair_model, args.dataset_namespace,args.tenant_id,bank_key), indent=2))
+            print(json.dumps(run_pipeline(args.suppliers, args.spend, args.output_dir, not args.without_dbt, config, engine.calibration, engine.pair_model, args.dataset_namespace,args.tenant_id,bank_key,args.graph_discovery), indent=2))
         elif args.command == "train":
+            if args.graph_discovery: raise ValueError('Graph retrieval reviews require a separately validated calibration cohort; baseline training cannot consume them')
             from .feedback import train_from_reviews
             print(json.dumps(train_from_reviews(engine.db, config.config_id, args.dataset_namespace, args.output, args.split_manifest), indent=2))
         elif args.command == "feedback-export":

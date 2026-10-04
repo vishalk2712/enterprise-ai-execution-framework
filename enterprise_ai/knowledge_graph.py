@@ -5,7 +5,7 @@ import json
 
 from .normalization import identifier
 
-ATTRIBUTES = {"registration_id": "HAS_REGISTRATION", "tax_id": "HAS_TAX_ID", "lei": "HAS_LEI", "postcode": "SHARES_POSTCODE", "bank_account_hash": "HAS_BANK_HASH"}
+ATTRIBUTES = {"registration_id": "HAS_REGISTRATION", "tax_id": "HAS_TAX_ID", "lei": "HAS_LEI", "postcode": "SHARES_POSTCODE", "bank_account_hash": "HAS_BANK_HASH", "address": "SHARES_ADDRESS"}
 RELATIONS = {*ATTRIBUTES.values(), "RESOLVED_TO", "INVOICED_TO", "IN_CATEGORY", "ASSOCIATED_WITH"}
 
 
@@ -33,7 +33,10 @@ def rebuild(db, records, invoices, entities, memberships):
         nodes[rid] = ("supplier", row["name"])
         edges.add((rid, "RESOLVED_TO", memberships[row["supplier_id"]]))
         for field, relation in ATTRIBUTES.items():
-            value = identifier(row.get(field, ""))
+            from .normalization import tokens
+            value = " ".join(tokens(row.get(field, ""))) if field == "address" else identifier(row.get(field, ""))
+            if field == "address" and (len(value) < 12 or len(value.split()) < 3):
+                continue
             if not value:
                 continue
             key = attribute_node(field, value, row["country"])

@@ -6,6 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit, parse_qs
 from uuid import uuid4
+import threading
 
 from .engine import Engine, ValidationError
 
@@ -16,7 +17,9 @@ def demo_csv():
             (root / "spend.csv").read_text(encoding="utf-8"))
 
 
-def make_server(engine: Engine, port: int = 8765, contract_workdir=None, rationale_model=None, security=None):
+def make_server(engine: Engine, port: int = 8765, contract_workdir=None, rationale_model=None, security=None, risk_interval=60):
+    if isinstance(risk_interval, bool) or not isinstance(risk_interval, (int, float)) or not 5 <= risk_interval <= 3600:
+        raise ValueError('Risk scan interval must be 5..3600 seconds')
     if security and security.tenant!=engine.tenant_id: raise ValueError('Dashboard identities belong to another tenant')
     with engine.lock,engine.db:
         access_mode=engine._meta('dashboard_access_mode')
@@ -35,7 +38,7 @@ def make_server(engine: Engine, port: int = 8765, contract_workdir=None, rationa
             engine.analyze(suppliers, spend)
         return engine.state(review_limit=200, graph_limit=300)
     class Handler(BaseHTTPRequestHandler):
-        server_version = "OutcomeEngine/0.8"
+        server_version = "OutcomeEngine/0.10"
 
         def _host_ok(self):
             return self.headers.get("Host") in {f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}
@@ -86,6 +89,17 @@ def make_server(engine: Engine, port: int = 8765, contract_workdir=None, rationa
                     return self.respond(403, {'error': 'Worker authentication required'})
                 return self.respond(200, engine.coordinator.identity())
             if path.startswith('/api/') and path!='/api/health' and not self.permitted('read'): return
+            if path in {'/api/risk-dossiers', '/api/risk-export'}:
+                if not self.permitted('investigate'): return
+                try:
+                    params = parse_qs(urlsplit(self.path).query)
+                    result = engine.risk_dossiers(int(params.get('limit', [25])[0]), int(params.get('offset', [0])[0]))
+                    if path == '/api/risk-export':
+                        from .risk import export_markdown
+                        return self.respond(200, export_markdown(result).encode('utf-8'), 'text/markdown; charset=utf-8', True)
+                    return self.respond(200, result)
+                except ValueError as exc:
+                    return self.respond(400, {'error': str(exc)})
             if path=='/api/investigations':
                 return self.respond(200,engine.coordinator.investigations() if engine.coordinator else {'jobs':[],'max_attempts':3})
             if path in {"/api/graph", "/api/explanation", "/api/entity-rationale", "/api/feedback-summary"}:
@@ -131,7 +145,7 @@ def make_server(engine: Engine, port: int = 8765, contract_workdir=None, rationa
                                            "browser_execution": engine.browser_erp is not None, 'detached_workers': engine.coordinator is not None})
             if path == "/api/export":
                 return self.respond(200, engine.export_report().encode("utf-8"), "text/markdown; charset=utf-8", True)
-            assets = {"/": ("index.html", "text/html"), "/static/app.js": ("app.js", "text/javascript"), "/static/reviews.js": ("reviews.js", "text/javascript"), "/static/style.css": ("style.css", "text/css")}
+            assets = {"/": ("index.html", "text/html"), "/static/app.js": ("app.js", "text/javascript"), "/static/reviews.js": ("reviews.js", "text/javascript"), "/static/risks.js": ("risks.js", "text/javascript"), "/static/style.css": ("style.css", "text/css")}
             if path in assets:
                 name, mime = assets[path]
                 return self.respond(200, (Path(__file__).parent / "static" / name).read_bytes(), mime + "; charset=utf-8")
@@ -210,6 +224,22 @@ def make_server(engine: Engine, port: int = 8765, contract_workdir=None, rationa
             if urlsplit(self.path).path.startswith('/api/worker/') or urlsplit(self.path).path.startswith('/api/session/'): return
             super().log_message(fmt, *args)
 
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    class MonitoredServer(ThreadingHTTPServer):
+        def server_close(self):
+            self.risk_stop.set()
+            if self.risk_thread.is_alive(): self.risk_thread.join(timeout=3)
+            super().server_close()
+    server = MonitoredServer(("127.0.0.1", port), Handler)
     server.daemon_threads = True
+    server.risk_stop = threading.Event()
+    def monitor():
+        while not server.risk_stop.is_set():
+            try:
+                engine.scan_risks()
+            except Exception:
+                with engine.lock, engine.db:
+                    engine.db.execute("INSERT OR REPLACE INTO metadata VALUES('risk_monitor_error',?)", (json.dumps('Risk monitor failed; inspect the local application before relying on its dossiers.'),))
+            if server.risk_stop.wait(risk_interval): break
+    server.risk_thread = threading.Thread(target=monitor, name='outcome-read-only-risk-monitor', daemon=True)
+    server.risk_thread.start()
     return server

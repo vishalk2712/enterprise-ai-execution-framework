@@ -11,6 +11,11 @@ RECORD_FIELDS = ("supplier_id", "name", "country", "registration_id", "tax_id", 
 SPLITS = ("train", "validation", "calibration", "test")
 
 
+def sampling_config_id(base_config_id, statistics):
+    policy = statistics.get('graph_discovery', {}).get('policy_id')
+    return fingerprint({'base_matching_config': base_config_id, 'graph_policy': policy}) if policy else base_config_id
+
+
 def sample(evaluation, config, config_id, namespace="local"):
     records = [evaluation["left_record"], evaluation["right_record"]]
     keys = [fingerprint({k: row.get(k, "") for k in RECORD_FIELDS}) for row in records]
@@ -44,7 +49,12 @@ def record_feedback(db, decision):
     row = db.execute("""SELECT e.payload_json,r.config_json,r.config_id,r.snapshot_id,r.statistics_json
       FROM pair_evaluations e JOIN resolution_runs r USING(run_id) WHERE e.evaluation_id=?""", (decision["evaluation_id"],)).fetchone()
     stats = json.loads(row["statistics_json"])
-    item = sample(json.loads(row["payload_json"]), json.loads(row["config_json"]), row["config_id"], stats.get("dataset_namespace", "local"))
+    policy = stats.get('graph_discovery', {}).get('policy_id')
+    sampling_config = sampling_config_id(row['config_id'], stats)
+    item = sample(json.loads(row["payload_json"]), json.loads(row["config_json"]), sampling_config, stats.get("dataset_namespace", "local"))
+    if policy:
+        item.update(base_matching_config_id=row['config_id'], graph_policy_id=policy,
+                    calibration_status='Separate graph retrieval cohort; not eligible for baseline calibration')
     item.update(decision_id=decision["decision_id"], human_label=decision["human_label"], reviewer=decision["reviewer"],
                 reason=decision["reason"], snapshot_id=row["snapshot_id"], created_at=decision["created_at"], label_provenance="self_declared_local_reviewer")
     db.execute("INSERT INTO training_feedback VALUES(?,?,?,?,?)", (decision["decision_id"], item["pair_key"], item["config_id"], item["namespace"], json.dumps(item)))

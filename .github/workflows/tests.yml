@@ -15,6 +15,7 @@ jobs:
       - run: python -m unittest discover -s tests -p test_adapter_safety.py -v
         env:
           OUTCOME_TEST_INGEST: '1'
+      - run: python -m unittest discover -s tests -p test_open_data.py -v
   vault-security:
     runs-on: ubuntu-latest
     services:

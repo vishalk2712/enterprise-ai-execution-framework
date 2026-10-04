@@ -1,0 +1,170 @@
+{
+  "protocol": "Fold training-only constant contributions into the intercept; zero those coefficients. No refit, calibration, cutoff selection or new labels.",
+  "source_model_id": "61c3fc29844cdf4c14a138ecae4a46131b073282df68e1f48c5f4c9fa39771ac",
+  "corrected_model_id": "c3058988da0cdce96e3dd0f45e752636c1de6b71fa851fafd90b682aa3f139cb",
+  "source_model_file_sha256": "58e4fe16838a8b199e69f4cf8e7b86498a6b0aef96ec70223ddac57b9b838862",
+  "corrected_model_file_sha256": "981d356587c4e81391f833a58c8c8d6826b96586c9cac8537e0fa8e82c11b0bb",
+  "source_labels_file_sha256": "765ee26ce6baf1a7c1dba8f9d8b79a58c06a409a2b45ac804c43226b0008dc7d",
+  "source_labels_sha256": "33b4fad07bd182d7767174642acebcbe8aa86fa81645f8e9ff830e016ba7e0cb",
+  "rows_checked": 45318,
+  "training_feature_support": {
+    "method": "training-range-v1",
+    "rows": 29831,
+    "ranges": {
+      "name_levenshtein": {
+        "min": 0.0,
+        "max": 0.9807692307692307
+      },
+      "name_token_jaccard": {
+        "min": 0.0,
+        "max": 1.0
+      },
+      "name_trigram_dice": {
+        "min": 0.0,
+        "max": 0.972972972972973
+      },
+      "name_sorted_levenshtein": {
+        "min": 0.0,
+        "max": 1.0
+      },
+      "address_jaccard": {
+        "min": 0.0,
+        "max": 1.0
+      },
+      "address_present": {
+        "min": 1.0,
+        "max": 1.0
+      },
+      "postcode_exact": {
+        "min": 0.0,
+        "max": 0.0
+      },
+      "postcode_present": {
+        "min": 0.0,
+        "max": 0.0
+      },
+      "same_country": {
+        "min": 1.0,
+        "max": 1.0
+      },
+      "shared_tax_id": {
+        "min": 0.0,
+        "max": 0.0
+      },
+      "shared_registration_id": {
+        "min": 0.0,
+        "max": 0.0
+      },
+      "identifier_conflict": {
+        "min": 0.0,
+        "max": 0.0
+      }
+    },
+    "constant_features": {
+      "address_present": 1.0,
+      "postcode_exact": 0.0,
+      "postcode_present": 0.0,
+      "same_country": 1.0,
+      "shared_tax_id": 0.0,
+      "shared_registration_id": 0.0,
+      "identifier_conflict": 0.0
+    }
+  },
+  "review_threshold": 0.10782381324458289,
+  "probability_status": "model_estimate",
+  "comparison": {
+    "train": {
+      "rows": 29831,
+      "max_prediction_delta": 5.551115123125783e-16,
+      "cutoff_decisions_changed": 0,
+      "original_retrieved_pair_diagnostics": {
+        "rows": 29831,
+        "positives": 438,
+        "brier_score": 0.004090190513145526,
+        "true_positives": 375,
+        "false_positives": 60,
+        "false_negatives": 63,
+        "precision": 0.8620689655172413,
+        "recall": 0.8561643835616438,
+        "review_pairs": 435
+      },
+      "corrected_retrieved_pair_diagnostics": {
+        "rows": 29831,
+        "positives": 438,
+        "brier_score": 0.0040901905131455266,
+        "true_positives": 375,
+        "false_positives": 60,
+        "false_negatives": 63,
+        "precision": 0.8620689655172413,
+        "recall": 0.8561643835616438,
+        "review_pairs": 435
+      }
+    },
+    "validation": {
+      "rows": 7820,
+      "max_prediction_delta": 4.440892098500626e-16,
+      "cutoff_decisions_changed": 0,
+      "original_retrieved_pair_diagnostics": {
+        "rows": 7820,
+        "positives": 181,
+        "brier_score": 0.006535614256972514,
+        "true_positives": 155,
+        "false_positives": 8,
+        "false_negatives": 26,
+        "precision": 0.950920245398773,
+        "recall": 0.856353591160221,
+        "review_pairs": 163
+      },
+      "corrected_retrieved_pair_diagnostics": {
+        "rows": 7820,
+        "positives": 181,
+        "brier_score": 0.006535614256972516,
+        "true_positives": 155,
+        "false_positives": 8,
+        "false_negatives": 26,
+        "precision": 0.950920245398773,
+        "recall": 0.856353591160221,
+        "review_pairs": 163
+      }
+    },
+    "test": {
+      "rows": 7667,
+      "max_prediction_delta": 4.440892098500626e-16,
+      "cutoff_decisions_changed": 0,
+      "original_retrieved_pair_diagnostics": {
+        "rows": 7667,
+        "positives": 153,
+        "brier_score": 0.004467887446185121,
+        "true_positives": 133,
+        "false_positives": 3,
+        "false_negatives": 20,
+        "precision": 0.9779411764705882,
+        "recall": 0.869281045751634,
+        "review_pairs": 136
+      },
+      "corrected_retrieved_pair_diagnostics": {
+        "rows": 7667,
+        "positives": 153,
+        "brier_score": 0.004467887446185122,
+        "true_positives": 133,
+        "false_positives": 3,
+        "false_negatives": 20,
+        "precision": 0.9779411764705882,
+        "recall": 0.869281045751634,
+        "review_pairs": 136
+      }
+    }
+  },
+  "synthetic_numeric_counterfactual": {
+    "description": "Identical address, no name similarity; vary only same_country. Not observed supplier data or identity ground truth.",
+    "same_country": {
+      "original": 0.09053049466379938,
+      "corrected": 0.09053049466379934
+    },
+    "different_country": {
+      "original": 0.23745221146131726,
+      "corrected": 0.09053049466379934
+    }
+  },
+  "limitations": "Original-cohort equivalence is not off-cohort equivalence or independent validation. Reference labels remain weak. This report measures retrieved pairs, not end-to-end recall; no authority, calibration or activation is added."
+}

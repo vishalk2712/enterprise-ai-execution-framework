@@ -329,6 +329,15 @@ function renderReviews(loaded, candidates = state.review_candidates || [], total
     const names = element("p", "review-names");
     names.append(document.createTextNode(safeString(candidate.left_name)), element("span", "", "↔"), document.createTextNode(safeString(candidate.right_name)));
     card.append(names, element("p", "review-reason", candidate.reason), element("small", "review-id", `${safeString(candidate.left_id)} / ${safeString(candidate.right_id)} · Kept separate`));
+    if (candidate.graph_paths?.length) {
+      const paths = element('details', 'payload-details');
+      paths.append(element('summary', '', 'Inspect association paths'));
+      for (const path of candidate.graph_paths) {
+        paths.append(element('p', 'section-note', path.map(edge => `${edge.source_label} → ${edge.relation.replaceAll('_', ' ').toLowerCase()} → ${edge.target_kind}`).join(' · ')));
+      }
+      paths.append(element('pre', '', JSON.stringify(candidate.graph_paths, null, 2)));
+      card.append(paths);
+    }
     host.append(card);
   }
 }
@@ -521,7 +530,7 @@ window.outcomeAccessReady = (async()=>{
   const access = await api('/api/session');
   window.outcomePermissions = access.permissions; window.outcomePrincipal=access.principal;
   $('#access-status').textContent = access.secured ? (access.principal ? `${access.tenant_id} · ${access.principal.id}` : `Sign in to ${access.tenant_id}`) : `${access.tenant_id} · Unsecured local demo`;
-  $('#access-note').textContent = access.secured ? 'Stewards review and stage. A different authorized approver releases execution. Investigators reconcile exhausted jobs.' : 'All local demo actions are available. Start the server with an identity configuration to enable roles.';
+  $('#access-note').textContent = access.secured ? 'Stewards review and stage. A different authorized approver releases execution. Investigators inspect risk dossiers and reconcile exhausted jobs.' : 'All local demo actions are available. Start the server with an identity configuration to enable roles.';
   $('#login-form').hidden = !access.secured || !!access.principal;
   $('#logout-button').hidden = !access.principal;
   $('#workspace-content').hidden = !window.outcomeCan('read');

@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/static/style.css">
   <script src="/static/app.js" defer></script>
   <script src="/static/reviews.js" defer></script>
+  <script src="/static/risks.js" defer></script>
 </head>
 <body>
   <header class="masthead">
@@ -26,7 +27,7 @@
     <div id="workspace-content" hidden>
     <section class="hero" id="overview">
       <div><div class="eyebrow"><span class="short-rule"></span> DATA → EVIDENCE → OUTCOME</div><h1>Clarity across<br>your supplier data.</h1><p>Resolve identities. Understand spend. Move from a source-backed answer to an approved action.</p></div>
-      <div class="hero-aside"><div class="version-tag">WORKING PROTOTYPE / V0.9</div><p>Evidence for every decision.<br>Your data stays in this local workspace.</p><div class="hero-buttons"><button id="demo-button" class="button button-primary" type="button"><span aria-hidden="true">↗</span> Load sample data</button><a id="export-button" class="button button-secondary" href="/api/export" download="supplier-intelligence-report.md">Export report</a></div></div>
+      <div class="hero-aside"><div class="version-tag">WORKING PROTOTYPE / V0.10</div><p>Evidence for every decision.<br>Your data stays in this local workspace.</p><div class="hero-buttons"><button id="demo-button" class="button button-primary" type="button"><span aria-hidden="true">↗</span> Load sample data</button><a id="export-button" class="button button-secondary" href="/api/export" download="supplier-intelligence-report.md">Export report</a></div></div>
     </section>
     <section class="metrics" aria-label="Dataset overview">
       <div class="metric"><span class="metric-label">SUPPLIER RECORDS</span><strong id="supplier-count">—</strong><span>Across imported source rows</span></div>
@@ -53,6 +54,7 @@
       <div class="review-controls"><label>Resolution run <select id="review-run"></select></label><button id="review-refresh" class="button button-secondary">Refresh runs</button><button id="review-prev" class="button button-secondary">Previous pairs</button><button id="review-next" class="button button-secondary">Next pairs</button></div>
       <p id="learning-status" role="status" aria-live="polite"></p><div id="evaluation-list"></div>
     </section>
+    <section class="panel" id="risks" hidden><div class="panel-heading"><div><div class="eyebrow">READ-ONLY INVESTIGATION</div><h2>Risk signals with source evidence</h2></div><a class="button button-secondary" href="/api/risk-export" download="risk-dossiers.md">Export this dossier page</a></div><p class="section-note">Observed monthly outflow, bank-link changes and repeated execution failures. Signals require human investigation and cannot merge, approve or execute. Monitoring runs while this local server is running.</p><p id="risk-status" role="status" aria-live="polite"></p><div class="review-controls"><button id="risk-prev" class="button button-secondary">Previous dossiers</button><button id="risk-next" class="button button-secondary">Next dossiers</button></div><div id="risk-list"></div></section>
     <section class="panel" id="investigations"><div class="panel-heading"><div><div class="eyebrow">EXECUTION RECOVERY</div><h2>Investigate exhausted attempts</h2></div><span id="investigation-count" class="pill">0 open</span></div><p class="section-note">An investigator can check the destination for an existing receipt and record a finding. Investigation does not reset attempts or replay an action.</p><div id="investigation-list"></div></section>
     </div>
     <footer class="page-footer"><div><span class="footer-mark">oe</span> Outcome Engine <span class="footer-separator">/</span> From fragmented data to verifiable work.</div><span>Local prototype · Tenant-isolated sandbox</span></footer>

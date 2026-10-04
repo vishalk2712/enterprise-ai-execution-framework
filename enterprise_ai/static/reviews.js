@@ -12,7 +12,7 @@
     const result = await get(`/api/evaluations?limit=25&offset=${offset}${runId ? '&run_id='+encodeURIComponent(runId) : ''}`);
     const feedback = await get('/api/feedback-summary');
     if (current !== revision) return;
-    document.querySelector('#feedback-status').textContent = `${feedback.eligible_pairs} eligible reviewed pairs · ${feedback.review_events} saved decisions · ${feedback.unsure_pairs} unsure · ${feedback.conflicting_pairs.length} inconsistent pairs excluded. Models remain inactive until explicitly loaded.`;
+    document.querySelector('#feedback-status').textContent = `${feedback.eligible_pairs} eligible baseline pairs · ${feedback.review_events} baseline decisions · ${feedback.unsure_pairs} unsure · ${feedback.conflicting_pairs.length} inconsistent pairs excluded.${feedback.graph_review_events !== undefined ? ` ${feedback.graph_review_events} graph-cohort decisions retained separately; require new calibration.` : ''} Models remain inactive until explicitly loaded.`;
     const host = document.querySelector('#evaluation-list'); host.replaceChildren();
     document.querySelector('#review-prev').disabled = offset === 0;
     document.querySelector('#review-next').disabled = offset + result.limit >= result.total;
@@ -31,7 +31,7 @@
           catch(error) { rationale.textContent=error.message; delete rationale.dataset.loaded; }
         }
       });
-      card.append(node('pre', JSON.stringify({features:item.features, model_features:item.model_features, feature_schema:item.feature_schema, heuristic_outcome:item.heuristic_outcome, normalized_left:item.normalized_left, normalized_right:item.normalized_right, left:item.left_record, right:item.right_record, latest_decision:item.latest_decision},null,2)));
+      card.append(node('pre', JSON.stringify({graph_paths:item.graph_paths, graph_policy_id:item.graph_policy_id, features:item.features, model_features:item.model_features, feature_schema:item.feature_schema, heuristic_outcome:item.heuristic_outcome, normalized_left:item.normalized_left, normalized_right:item.normalized_right, left:item.left_record, right:item.right_record, latest_decision:item.latest_decision},null,2)));
       const form = node('form'); form.className = 'review-form';
       const label = node('select'); label.setAttribute('aria-label','Human label');
       for (const value of ['Unsure','Match','NonMatch']) { const option = node('option',value); option.value=value; label.append(option); }

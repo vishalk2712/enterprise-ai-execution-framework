@@ -6,7 +6,15 @@ The first working module of an enterprise data-to-outcome framework. Import supp
 
 The core runs on a laptop with Python 3.10+ and no extra packages, GPU, API key or cloud account. Browser execution optionally adds Node.js and Playwright. Factual summaries optionally use an already installed local Ollama model. Resolution remains governed by deterministic rules and the explicitly configured classifier; no newly trained LLM is bundled.
 
-## New in v0.10
+## New in v0.10.1
+
+Constant training features now receive zero coefficients and explicit training-range metadata. The supplied experimental model is a provenance-bound derivative that folds the old constant contributions into its intercept without refitting or choosing a new cutoff. The original model and historical benchmark files remain preserved. All **45,318 saved reference pairs** keep their original review-cutoff decisions; the graph ablation also keeps the same selections.
+
+On the same real payment input, the corrected graph-enabled review queue changes from **195 to 125 candidates**, with the same 483 entities, 2,772 lines and GBP 645,400,617.52. This is a workload change, not measured payment accuracy or improved recall. The model remains an uncalibrated, opt-in reference estimate and cannot authorize identity merges or actions.
+
+Read the [correction and reproduction guide](docs/model-correction-v101.md), [validation action plan](docs/action-plan-v1.md) and [changelog](CHANGELOG.md). Human adjudication and an assisted pilot remain the next evidence gates.
+
+## Included from v0.10
 
 Opt-in **graph discovery** adds bounded address and asserted ownership paths to candidate retrieval, with inspectable evidence and no community-based identity merges. On the frozen v0.9 reference cohort it recovered two additional matches: end-to-end reference recall rose from **80.61% to 81.82%**, with **97.83% reference precision**. These weak-label results are an ablation, not independently verified customer accuracy.
 

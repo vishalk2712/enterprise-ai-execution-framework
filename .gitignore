@@ -11,6 +11,8 @@ build/
 dist/
 *.egg-info/
 .pytest_cache/
+.coverage
+.coverage.*
 local-data/
 *.docx
 datasets/

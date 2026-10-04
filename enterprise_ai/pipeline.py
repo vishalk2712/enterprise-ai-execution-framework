@@ -22,7 +22,7 @@ def run_pipeline(suppliers_path, spend_path, output_dir, use_dbt=True, config=No
             (destination/"state.json").write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
             (destination/"resolution-audit.jsonl").write_text(engine.export_audit(), encoding="utf-8")
             (destination/"report.md").write_text(engine.export_report(), encoding="utf-8")
-            manifest = {"version": "0.10.0", "tenant_id":tenant_id,"bank_link_key_id":engine._meta('bank_link_key_id'),"dataset_namespace": dataset_namespace, "run_id": state["dataset"]["resolution_run_id"], "snapshot_id": state["dataset"]["snapshot_id"],
+            manifest = {"version": "0.10.1", "tenant_id":tenant_id,"bank_link_key_id":engine._meta('bank_link_key_id'),"dataset_namespace": dataset_namespace, "run_id": state["dataset"]["resolution_run_id"], "snapshot_id": state["dataset"]["snapshot_id"],
                         "pair_model_id": pair_model["model_id"] if pair_model else None,
                         "graph_discovery": state['dataset']['matching_statistics'].get('graph_discovery'),
                         "config_id": engine.match_config.config_id, "contracts": contract or {"status": "python_validation_only"},

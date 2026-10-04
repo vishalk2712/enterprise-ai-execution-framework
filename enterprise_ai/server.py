@@ -38,7 +38,7 @@ def make_server(engine: Engine, port: int = 8765, contract_workdir=None, rationa
             engine.analyze(suppliers, spend)
         return engine.state(review_limit=200, graph_limit=300)
     class Handler(BaseHTTPRequestHandler):
-        server_version = "OutcomeEngine/0.10"
+        server_version = "OutcomeEngine/0.10.1"
 
         def _host_ok(self):
             return self.headers.get("Host") in {f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}

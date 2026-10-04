@@ -52,6 +52,47 @@ def validate_features(features):
     return features
 
 
+def training_feature_support(feature_rows):
+    """Record ranges from training rows only; no fitting dependency required."""
+    if not feature_rows:
+        raise ValueError("Training features are required")
+    for features in feature_rows:
+        validate_features(features)
+    ranges = {name: {"min": min(row[name] for row in feature_rows),
+                     "max": max(row[name] for row in feature_rows)} for name in FEATURE_NAMES}
+    return {"method": "training-range-v1", "rows": len(feature_rows), "ranges": ranges,
+            "constant_features": {name: values["min"] for name, values in ranges.items()
+                                  if values["min"] == values["max"]}}
+
+
+def validate_training_support(artifact):
+    """Legacy artifacts remain readable; declared unsupported features fail closed."""
+    if "training_feature_support" not in artifact:
+        return
+    support = artifact["training_feature_support"]
+    if (not isinstance(support, dict) or support.get("method") != "training-range-v1"
+            or type(support.get("rows")) is not int or support["rows"] <= 0
+            or type(artifact.get("training_rows")) is not int
+            or support["rows"] != artifact.get("training_rows")):
+        raise ValueError("Invalid training feature support")
+    ranges = support.get("ranges")
+    if not isinstance(ranges, dict) or set(ranges) != set(FEATURE_NAMES):
+        raise ValueError("Exact training feature ranges required")
+    for values in ranges.values():
+        if (not isinstance(values, dict) or set(values) != {"min", "max"}
+                or not all(finite_number(v) for v in values.values())
+                or not 0 <= values["min"] <= values["max"] <= 1):
+            raise ValueError("Invalid training feature range")
+    expected = {name: values["min"] for name, values in ranges.items()
+                if values["min"] == values["max"]}
+    constants = support.get("constant_features")
+    if (not isinstance(constants, dict) or not all(finite_number(v) for v in constants.values())
+            or constants != expected):
+        raise ValueError("Constant features must agree with training ranges")
+    if any(artifact["weights"][FEATURE_NAMES.index(name)] != 0.0 for name in constants):
+        raise ValueError("Constant training features must have zero coefficients")
+
+
 def validate_artifact(artifact, config_id, domain):
     if not isinstance(artifact, dict) or artifact.get("version") != VERSION or artifact.get("feature_schema") != FEATURE_SCHEMA:
         raise ValueError("Unsupported pair model or feature schema")
@@ -62,6 +103,7 @@ def validate_artifact(artifact, config_id, domain):
     weights = artifact.get("weights")
     if not isinstance(weights, list) or len(weights) != len(FEATURE_NAMES) or not all(finite_number(w) for w in weights) or not finite_number(artifact.get("intercept")):
         raise ValueError("Pair model coefficients must be finite numbers")
+    validate_training_support(artifact)
     threshold = artifact.get("review_threshold")
     if not finite_number(threshold) or not 0 <= threshold <= 1:
         raise ValueError("Invalid pair model review threshold")
@@ -80,6 +122,42 @@ def validate_artifact(artifact, config_id, domain):
         raise ValueError("Invalid pair model JSON") from exc
     if artifact.get("model_id") != expected:
         raise ValueError("Pair model fingerprint mismatch")
+
+
+def correct_constant_features(artifact, rows):
+    """Derive an uncalibrated legacy artifact without refitting or choosing a cutoff.
+
+    Exact original label provenance is required. The original object is retained;
+    the new artifact folds each training-constant contribution into its intercept.
+    This preserves original-cohort logits, not predictions outside that support.
+    """
+    if not isinstance(artifact, dict):
+        raise ValueError("A legacy model artifact is required")
+    validate_artifact(artifact, artifact.get("config_id"), artifact.get("domain"))
+    if "training_feature_support" in artifact or "constant_feature_correction" in artifact:
+        raise ValueError("Artifact already declares training feature support or a correction")
+    if artifact.get("probability_status") != "model_estimate" or artifact.get("calibration") is not None:
+        raise ValueError("Only uncalibrated legacy model estimates can be corrected")
+    if fingerprint(rows) != artifact.get("labels_sha256"):
+        raise ValueError("Exact original label fingerprint required for correction")
+    partitions = partitions_for(rows, artifact["config_id"], label_field=artifact.get("label_field", "human_label"))
+    training = [row["model_features"] for row in partitions["train"]]
+    if len(training) != artifact.get("training_rows"):
+        raise ValueError("Original training row count does not match")
+    support = training_feature_support(training)
+    corrected = json.loads(json.dumps(artifact, allow_nan=False))
+    for name, value in support["constant_features"].items():
+        index = FEATURE_NAMES.index(name)
+        corrected["intercept"] += corrected["weights"][index] * value
+        corrected["weights"][index] = 0.0
+    corrected["training_feature_support"] = support
+    corrected["constant_feature_correction"] = {"method": "fold-training-constants-v1",
+        "source_model_id": artifact["model_id"], "source_labels_sha256": artifact["labels_sha256"],
+        "refit": False, "threshold_reselected": False}
+    corrected.pop("model_id")
+    corrected["model_id"] = fingerprint(corrected)
+    validate_artifact(corrected, artifact["config_id"], artifact["domain"])
+    return corrected
 
 
 def predict(features, artifact):
@@ -197,13 +275,17 @@ def fit_pair_model(rows, config_id, domain, target_precision=.95, calibrate=Fals
     matrices = {s: np.asarray([[r["model_features"][n] for n in FEATURE_NAMES] for r in subset], dtype=float) for s, subset in partitions.items()}
     labels = {s: np.asarray([int(r[label_field] == "Match") for r in subset], dtype=float) for s, subset in partitions.items()}
     x, y = matrices["train"], labels["train"]
+    support = training_feature_support([row["model_features"] for row in partitions["train"]])
+    active = np.asarray([name not in support["constant_features"] for name in FEATURE_NAMES], dtype=bool)
     candidates = []
     for penalty in (.0001, .001, .01):
         weights = np.zeros(len(FEATURE_NAMES))
         intercept = math.log(float(y.mean()) / (1 - float(y.mean())))
         for _ in range(1800):
             errors = 1 / (1 + np.exp(-np.clip(x @ weights + intercept, -40, 40))) - y
-            weights -= (x.T @ errors) / len(y) + penalty * weights
+            # Constant columns contain no identifiable feature effect. Holding
+            # their coefficients at zero also covers an intercept-only model.
+            weights[active] -= (x[:, active].T @ errors) / len(y) + penalty * weights[active]
             intercept -= float(errors.mean())
         # Evaluate with the same scalar arithmetic as dependency-free inference.
         # BLAS rounding at an exactly tied cutoff must not change review routing.
@@ -221,6 +303,7 @@ def fit_pair_model(rows, config_id, domain, target_precision=.95, calibrate=Fals
                 "config_id": config_id, "domain": domain.strip(), "weights": weights.tolist(), "intercept": intercept,
                 "regularization": penalty, "iterations": 1800, "review_threshold": threshold,
                 "target_validation_precision": target_precision, "training_rows": len(y),
+                "training_feature_support": support,
                 "validation": validation, "test": diagnostics(partitions["test"], test_predictions, threshold, label_field),
                 "labels_sha256": fingerprint(rows), "probability_status": "model_estimate",
                 "limitations": "Uncalibrated estimate for the labeled candidate distribution. Validation precision is observed, not guaranteed. Entity groups must be correct. No auto-merges or action authorization; person benchmarks do not establish supplier accuracy."}

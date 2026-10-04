@@ -1,4 +1,10 @@
-# Experimental SPIDER pair model
+# Experimental matching models
+
+`contracts-finder-pair-model.json` is the v0.9 supplier-name classifier trained on real 2025 Contracts Finder observations. It contains twelve numeric coefficients, an intercept, feature/configuration fingerprints and held-out diagnostics. Labels come from publisher-asserted Companies House IDs and are explicitly `reference_label`, not human decisions. The model is uncalibrated, experimental and opt-in. It ranks review candidates and never authorizes merges or execution.
+
+The held-out reference precision is 97.79%, with 80.61% end-to-end reference recall including blocking misses. These are reference-label results, not independently verified payment accuracy. The [model/data guide](../docs/open-data-v09.md) gives source attribution, original hashes, sampling, split protocol, reproduction commands and limitations. Source-derived material retains the [Open Government Licence v3.0](https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/) attribution. Contains public sector information licensed under the Open Government Licence v3.0. Original code is MIT; neither source data nor government endorsement is bundled.
+
+## Archived SPIDER pair model
 
 This artifact is frozen from v0.3 (commit `47c8404`). v0.4 changes the matching configuration and feature schema; reproduce this historical experiment from that commit. No incompatible weights are silently migrated or loaded.
 

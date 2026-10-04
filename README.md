@@ -6,7 +6,15 @@ The first working module of an enterprise data-to-outcome framework. Import supp
 
 The core runs on a laptop with Python 3.10+ and no extra packages, GPU, API key or cloud account. Browser execution optionally adds Node.js and Playwright. Factual summaries optionally use an already installed local Ollama model. Resolution remains governed by deterministic rules and the explicitly configured classifier; no newly trained LLM is bundled.
 
-## New in v0.8
+## New in v0.9
+
+The first real-data cohort contains **2,772 March 2025 payment lines and 483 source supplier observations** from the Cabinet Office, HMRC and HM Treasury. Source totals reconcile exactly to **GBP 645,400,617.52**. Repeated transaction references and negative payments are preserved. These are thresholded published payments with unknown tax basis, not net invoices or contract award values.
+
+An experimental twelve-feature classifier was trained on **29,831 candidate pairs** from real Contracts Finder supplier observations. Whole asserted company identities are held apart between training, validation and testing, and authority IDs are masked from model inputs. On 280 held-out companies it found 133 reference matches with 3 reference false positives: **97.8% reference precision and 80.6% end-to-end reference recall**. Publisher IDs supply weak reference labels, not verified identities or human judgments; these results do not establish payment accuracy.
+
+Read the [real-data ingestion, training and review guide](docs/open-data-v09.md). The supplied model is experimental and opt-in. No payment identities were automatically merged, no human labels were fabricated, and no external system was updated. The next milestone is independently verified payment-pair labels, not additional execution infrastructure.
+
+## Included from v0.8
 
 Real-extract preparation now profiles and maps delimited or optional Excel files into the strict importer, preserves source-prefixed IDs and local extras, and binds reviewed mappings to approval snapshots. Placeholder/reused authority IDs are blocked, generic supplier names no longer capture spend queries, conflict reviews name the failing pair, and dashboard candidates are paged with true totals. Operational audit events now have a verifiable hash chain and exportable checkpoints.
 

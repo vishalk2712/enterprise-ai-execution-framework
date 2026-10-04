@@ -1,0 +1,63 @@
+{
+  "dataset": "Real UK March 2025 published payments",
+  "snapshot": "eb779a63beadafd94b2a4ed4c93d453f78c28852301a5e42736e97fc2d4c9184",
+  "suppliers": 483,
+  "entities": 483,
+  "payments": 2772,
+  "totals": [
+    {
+      "currency": "GBP",
+      "amount": "645400617.52",
+      "invoice_count": 2772
+    }
+  ],
+  "reviews": 195,
+  "graph_discovery": {
+    "policy": {
+      "version": "association-paths-v1",
+      "max_posting": 40,
+      "max_neighbors": 40,
+      "max_paths": 2,
+      "max_expansions": 20000,
+      "max_pairs": 10000
+    },
+    "policy_id": "c5629bb0a247933f105dc490394f8c7849365afd927f8c0fafd9a0ae524a2c8e",
+    "candidate_pairs": 7,
+    "expansions": 14,
+    "oversized_nodes_skipped": 0,
+    "records_with_capped_neighbors": 0,
+    "truncated": false,
+    "expansion_budget_reached": false,
+    "identity_authority": false,
+    "storage": "in_memory_bipartite_index",
+    "additional_pairs": 0
+  },
+  "dbt": "passed",
+  "risk_scan": {
+    "audit_events_read": 1,
+    "bank_observed_current_records": 0,
+    "count": 0,
+    "coverage": "Accepted replacement imports and latest 100 operational audit events; no external stream subscription or raw bank access",
+    "dossier_budget_reached": false,
+    "dossier_ids": [],
+    "history_snapshots_read": 1,
+    "insufficient_or_partial_month_baselines": 483,
+    "namespace": "uk-open-payments-2025-03",
+    "policy": {
+      "audit_tail_events": 100,
+      "bank_changes": 2,
+      "baseline_months": 3,
+      "history_snapshots": 8,
+      "max_dossiers_per_scan": 500,
+      "minimum_increase": "1000.00",
+      "spike_ratio": "3",
+      "version": "risk-signals-v1"
+    },
+    "policy_id": "e78c3e2009ea4d5790c02b8ae7852b12699260e04bd519e4bdea4a6b10aa6bb5",
+    "scanned_at": "2026-10-04T09:30:17.028582+00:00",
+    "snapshot": "eb779a63beadafd94b2a4ed4c93d453f78c28852301a5e42736e97fc2d4c9184"
+  },
+  "actions": 0,
+  "human_labels": 0,
+  "audit_verification": "verified"
+}

@@ -1,0 +1,60 @@
+{
+  "protocol": "Frozen v0.9 test companies, unchanged features and model cutoff. No refit, calibration, threshold tuning or label addition. Graph bounds declared before measurement.",
+  "label_status": "Weak publisher-asserted GB-COH references, not registry verified or human labels",
+  "company_split_hash": "87bc69836d38b007924a3b177b2053bb6bee4e0737729d1d07ff78b537b69d23",
+  "model_id": "61c3fc29844cdf4c14a138ecae4a46131b073282df68e1f48c5f4c9fa39771ac",
+  "graph_policy_id": "c5629bb0a247933f105dc490394f8c7849365afd927f8c0fafd9a0ae524a2c8e",
+  "records": 410,
+  "known_positive_reference_pairs": 165,
+  "baseline_retrieval": {
+    "pairs": 7667,
+    "reference_true_positives": 153,
+    "reference_false_positives": 7514,
+    "reference_precision": 0.019955654101995565,
+    "end_to_end_reference_recall": 0.9272727272727272
+  },
+  "graph_union_retrieval": {
+    "pairs": 7669,
+    "reference_true_positives": 155,
+    "reference_false_positives": 7514,
+    "reference_precision": 0.020211240057373844,
+    "end_to_end_reference_recall": 0.9393939393939394
+  },
+  "additional_retrieved_reference_matches": 2,
+  "unchanged_classifier_on_union": {
+    "pairs": 138,
+    "reference_true_positives": 135,
+    "reference_false_positives": 3,
+    "reference_precision": 0.9782608695652174,
+    "end_to_end_reference_recall": 0.8181818181818182
+  },
+  "classifier_plus_graph_context_review": {
+    "pairs": 138,
+    "reference_true_positives": 135,
+    "reference_false_positives": 3,
+    "reference_precision": 0.9782608695652174,
+    "end_to_end_reference_recall": 0.8181818181818182
+  },
+  "graph_diagnostics": {
+    "policy": {
+      "version": "association-paths-v1",
+      "max_posting": 40,
+      "max_neighbors": 40,
+      "max_paths": 2,
+      "max_expansions": 20000,
+      "max_pairs": 10000
+    },
+    "policy_id": "c5629bb0a247933f105dc490394f8c7849365afd927f8c0fafd9a0ae524a2c8e",
+    "candidate_pairs": 27,
+    "expansions": 54,
+    "oversized_nodes_skipped": 0,
+    "records_with_capped_neighbors": 0,
+    "truncated": false,
+    "expansion_budget_reached": false,
+    "identity_authority": false,
+    "storage": "in_memory_bipartite_index"
+  },
+  "elapsed_seconds": 10.66,
+  "limitations": "Reusing this research holdout for an ablation is not a fresh independent evaluation. Attribute coverage and weak labels constrain interpretation. Review queue precision is not auto-merge precision; no graph identity merges occur.",
+  "queue_scope": "Classifier-cutoff selections plus graph-path review lane; excludes the separate conflict-only review policy."
+}

@@ -16,6 +16,7 @@ jobs:
       - task: UsePythonVersion@0
         inputs:
           versionSpec: $(pythonVersion)
+      - script: python -m pip install --no-deps -e .
       - script: python -m unittest discover -s tests -v
         displayName: Test matching, audit and HTTP behavior
       - script: python -m enterprise_ai demo
@@ -27,6 +28,7 @@ jobs:
       - task: UsePythonVersion@0
         inputs:
           versionSpec: '3.12'
+      - script: python -m pip install --no-deps -e .
       - script: python -m pip install -r requirements-dbt.txt
       - script: python -m unittest discover -s tests -p test_contracts.py -v
         env:
@@ -43,6 +45,7 @@ jobs:
       - task: UsePythonVersion@0
         inputs:
           versionSpec: '3.12'
+      - script: python -m pip install --no-deps -e .
       - script: python -m pip install -r requirements-ml.txt -r requirements-feedback.txt
       - script: python -m unittest discover -s tests -v
         env:

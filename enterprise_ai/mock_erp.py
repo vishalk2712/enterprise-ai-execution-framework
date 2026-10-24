@@ -21,12 +21,7 @@ from urllib.parse import parse_qs, urlsplit
 ADAPTER = "mock-erp-dom-v1"
 
 
-def canonical(value):
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-
-
-def fingerprint(value):
-    return hashlib.sha256(canonical(value).encode()).hexdigest()
+from outcome_core.canonical import canonical, fingerprint
 
 
 def source_record(record):

@@ -18,7 +18,11 @@ ml = ["numpy>=1.26,<3"]
 outcome-engine = "enterprise_ai.__main__:main"
 
 [tool.setuptools.packages.find]
-include = ["enterprise_ai*"]
+where = [".", "packages/outcome-core/src"]
+include = ["enterprise_ai*", "outcome_core*"]
+
+[tool.setuptools.package-dir]
+outcome_core = "packages/outcome-core/src/outcome_core"
 
 [tool.setuptools.package-data]
 enterprise_ai = ["*.mjs", "static/*.html", "static/*.css", "static/*.js", "data/*.csv", "dbt/*.yml", "dbt/models/*.yml", "dbt/models/*.sql", "dbt/tests/*.sql"]

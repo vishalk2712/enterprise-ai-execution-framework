@@ -6,6 +6,19 @@ The first working module of an enterprise data-to-outcome framework. Import supp
 
 The core runs on a laptop with Python 3.10+ and no extra packages, GPU, API key or cloud account. Browser execution optionally adds Node.js and Playwright. Factual summaries optionally use an already installed local Ollama model. Resolution remains governed by deterministic rules and the explicitly configured classifier; no newly trained LLM is bundled.
 
+## Shared-core development
+
+Install this checkout before running CLI commands or tests:
+
+```sh
+python -m pip install --no-deps -e .
+```
+
+`packages/outcome-core` is also independently installable. It provides reusable
+audit-chain v1, matching, vault and approved-intent outbox primitives for sibling
+applications. No audio, UI or capture dependencies are included. Existing
+`enterprise_ai` imports remain compatible. See [the extraction notes](docs/continuum-core.md).
+
 ## New in v0.10.1
 
 Constant training features now receive zero coefficients and explicit training-range metadata. The supplied experimental model is a provenance-bound derivative that folds the old constant contributions into its intercept without refitting or choosing a new cutoff. The original model and historical benchmark files remain preserved. All **45,318 saved reference pairs** keep their original review-cutoff decisions; the graph ablation also keeps the same selections.
